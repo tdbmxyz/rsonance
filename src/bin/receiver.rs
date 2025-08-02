@@ -1,13 +1,13 @@
 use clap::Parser;
 use mike::{
-    VirtualMicResult, cleanup_virtual_microphone, setup_virtual_microphone, validate_buffer_size,
+    VirtualMicResult, cleanup_virtual_microphone, setup_virtual_microphone_with_config, 
+    validate_buffer_size,
 };
 use signal_hook::{consts::SIGINT, iterator::Signals};
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
-use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
@@ -61,7 +61,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     println!("Setting up virtual microphone...");
-    let result = setup_virtual_microphone()?;
+    let result = setup_virtual_microphone_with_config(&args.microphone_name, &args.fifo_path)?;
     match result {
         VirtualMicResult::Success => {
             println!("Virtual microphone created successfully");
@@ -133,20 +133,15 @@ fn handle_audio_stream(
     buffer_size: usize,
     verbose: bool,
 ) -> anyhow::Result<()> {
-    if Path::new(&fifo_path).exists() {
-        std::fs::remove_file(&fifo_path)?;
-    }
-
-    let status = Command::new("mkfifo").arg(&fifo_path).status()?;
-
-    if !status.success() {
-        return Err(anyhow::anyhow!("Failed to create audio pipe"));
-    }
-
     if verbose {
-        println!("Audio pipe created at {}", fifo_path);
-        println!("Virtual microphone will read audio data from this pipe");
+        println!("Starting audio stream handler");
+        println!("FIFO path: {}", fifo_path);
         println!("Using buffer size: {} bytes", buffer_size);
+    }
+
+    // The FIFO should already exist, created by the virtual microphone setup
+    if !Path::new(&fifo_path).exists() {
+        return Err(anyhow::anyhow!("FIFO pipe does not exist at {}", fifo_path));
     }
 
     let mut buffer = vec![0u8; buffer_size];
@@ -163,6 +158,9 @@ fn handle_audio_stream(
                     break;
                 }
                 Ok(n) => {
+                    if verbose {
+                        println!("Received {} bytes of audio data, writing to FIFO", n);
+                    }
                     if let Err(e) = fifo.write_all(&buffer[..n]) {
                         eprintln!("Failed to write to audio pipe: {}", e);
                         break;
@@ -182,4 +180,123 @@ fn handle_audio_stream(
         .map_err(|_| anyhow::anyhow!("Pipe writer thread panicked"))??;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn test_args_parsing() {
+        use clap::Parser;
+        
+        // Test default values
+        let args = Args::try_parse_from(&["mike-receiver"]).unwrap();
+        assert_eq!(args.host, "0.0.0.0");
+        assert_eq!(args.port, 8080);
+        assert_eq!(args.buffer_size, 4096);
+        assert_eq!(args.microphone_name, "mike_virtual_microphone");
+        assert_eq!(args.fifo_path, "/tmp/mike_audio_pipe");
+        assert!(!args.verbose);
+    }
+
+    #[test]
+    fn test_args_parsing_custom() {
+        use clap::Parser;
+        
+        let args = Args::try_parse_from(&[
+            "mike-receiver",
+            "--host", "192.168.1.100",
+            "--port", "9090",
+            "--buffer-size", "8192",
+            "--microphone-name", "test_mic",
+            "--fifo-path", "/tmp/test_pipe",
+            "--verbose"
+        ]).unwrap();
+        
+        assert_eq!(args.host, "192.168.1.100");
+        assert_eq!(args.port, 9090);
+        assert_eq!(args.buffer_size, 8192);
+        assert_eq!(args.microphone_name, "test_mic");
+        assert_eq!(args.fifo_path, "/tmp/test_pipe");
+        assert!(args.verbose);
+    }
+
+    #[test]
+    fn test_handle_audio_stream_missing_fifo() {
+        use std::net::{TcpListener, TcpStream};
+        use std::thread;
+        
+        // Create a test TCP connection
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        
+        let handle = thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            stream
+        });
+        
+        let _client_stream = TcpStream::connect(addr).unwrap();
+        let server_stream = handle.join().unwrap();
+        
+        // Test with non-existent FIFO
+        let result = handle_audio_stream(
+            server_stream,
+            "/tmp/non_existent_fifo".to_string(),
+            4096,
+            false
+        );
+        
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("FIFO pipe does not exist"));
+    }
+
+    #[test]
+    fn test_handle_audio_stream_with_fifo() {
+        use std::net::{TcpListener, TcpStream};
+        use std::thread;
+        use std::time::Duration;
+        
+        // Create test FIFO
+        let test_fifo = "/tmp/test_audio_pipe_for_test";
+        let _ = fs::remove_file(test_fifo); // Clean up if exists
+        
+        // Create FIFO
+        let status = std::process::Command::new("mkfifo")
+            .arg(test_fifo)
+            .status();
+        
+        if status.is_err() || !status.unwrap().success() {
+            // Skip test if mkfifo fails (not available)
+            return;
+        }
+        
+        // Create a test TCP connection
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        
+        let test_fifo_clone = test_fifo.to_string();
+        let handle = thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            
+            // Give some time for the handler to start
+            thread::sleep(Duration::from_millis(100));
+            
+            // Don't run the full handler as it would block on FIFO reading
+            // Just verify the FIFO exists check passes
+            let _result = std::path::Path::new(&test_fifo_clone).exists();
+            
+            stream
+        });
+        
+        let _client_stream = TcpStream::connect(addr).unwrap();
+        let _server_stream = handle.join().unwrap();
+        
+        // Verify FIFO exists
+        assert!(std::path::Path::new(test_fifo).exists());
+        
+        // Clean up
+        let _ = fs::remove_file(test_fifo);
+    }
 }

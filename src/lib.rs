@@ -62,20 +62,37 @@ pub enum VirtualMicResult {
 
 /// Creates virtual microphone using pactl
 pub fn setup_virtual_microphone() -> Result<VirtualMicResult> {
+    setup_virtual_microphone_with_config("mike_virtual_microphone", "/tmp/mike_audio_pipe")
+}
+
+/// Creates virtual microphone using pactl with custom configuration
+pub fn setup_virtual_microphone_with_config(source_name: &str, fifo_path: &str) -> Result<VirtualMicResult> {
+    // First, ensure the FIFO exists
+    if std::path::Path::new(fifo_path).exists() {
+        std::fs::remove_file(fifo_path)?;
+    }
+    
+    let mkfifo_status = Command::new("mkfifo").arg(fifo_path).status()?;
+    if !mkfifo_status.success() {
+        return Err(anyhow::anyhow!("Failed to create FIFO pipe at {}", fifo_path));
+    }
+
     let output = Command::new("pactl")
         .args([
             "load-module",
             "module-pipe-source",
-            "source_name=mike_virtual_microphone",
-            "file=/tmp/mike_audio_pipe",
+            &format!("source_name={}", source_name),
+            &format!("file={}", fifo_path),
             "format=s16le",
             "rate=44100",
             "channels=2",
-            "source_properties=device.description=Mike_Virtual_Microphone",
+            &format!("source_properties=device.description={}", source_name.replace('_', " ")),
         ])
         .output()?;
 
     if output.status.success() {
+        println!("Virtual microphone '{}' created successfully", source_name);
+        println!("FIFO pipe: {}", fifo_path);
         Ok(VirtualMicResult::Success)
     } else {
         eprintln!(
