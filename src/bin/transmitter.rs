@@ -1,12 +1,44 @@
+use clap::Parser;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use mike::parse_server_address;
+use mike::validate_buffer_size;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 
+/// Audio transmitter that captures microphone input and streams it to a remote receiver
+#[derive(Parser)]
+#[command(name = "mike-transmitter")]
+#[command(about = "Stream microphone audio to a remote virtual microphone")]
+#[command(version)]
+struct Args {
+    /// Server address to connect to
+    #[arg(short = 'H', long, default_value = "127.0.0.1")]
+    host: String,
+
+    /// Server port to connect to
+    #[arg(short, long, default_value_t = 8080)]
+    port: u16,
+
+    /// Audio buffer size in bytes (affects latency)
+    #[arg(short, long, default_value_t = 4096)]
+    buffer_size: usize,
+
+    /// Reconnection attempts on connection failure
+    #[arg(short, long, default_value_t = 5)]
+    reconnect_attempts: u32,
+
+    /// Enable verbose output
+    #[arg(short, long)]
+    verbose: bool,
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let server_addr = parse_server_address(std::env::args().nth(1));
+    let args = Args::parse();
+    let server_addr = format!("{}:{}", args.host, args.port);
+
+    // Validate buffer size
+    validate_buffer_size(args.buffer_size)?;
 
     println!("Connecting to server at {}...", server_addr);
 
@@ -19,17 +51,25 @@ async fn main() -> anyhow::Result<()> {
     let sample_format = config.sample_format();
     let config: cpal::StreamConfig = config.into();
 
-    println!(
-        "Using audio format: {:?} at {} Hz with {} channels",
-        sample_format, config.sample_rate.0, config.channels
-    );
+    if args.verbose {
+        println!(
+            "Using audio format: {:?} at {} Hz with {} channels",
+            sample_format, config.sample_rate.0, config.channels
+        );
+        println!("Buffer size: {} bytes", args.buffer_size);
+        println!("Max reconnection attempts: {}", args.reconnect_attempts);
+    }
 
     let tcp_stream = TcpStream::connect(&server_addr).await?;
     println!("Connected to server successfully");
 
     let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
 
-    let err_fn = |err| eprintln!("Audio stream error: {}", err);
+    let err_fn = move |err| {
+        if args.verbose {
+            eprintln!("Audio stream error: {}", err);
+        }
+    };
 
     let stream = match sample_format {
         cpal::SampleFormat::F32 => build_input_stream::<f32>(&device, &config, tx, err_fn)?,
@@ -48,7 +88,7 @@ async fn main() -> anyhow::Result<()> {
 
     let mut tcp_stream = tcp_stream;
     let mut reconnect_attempts = 0;
-    const MAX_RECONNECT_ATTEMPTS: u32 = 5;
+    let max_reconnect_attempts = args.reconnect_attempts;
 
     loop {
         tokio::select! {
@@ -58,9 +98,9 @@ async fn main() -> anyhow::Result<()> {
                         if let Err(e) = tcp_stream.write_all(&audio_data).await {
                             eprintln!("Failed to send audio data: {}", e);
 
-                            if reconnect_attempts < MAX_RECONNECT_ATTEMPTS {
+                            if reconnect_attempts < max_reconnect_attempts {
                                 println!("Attempting to reconnect... ({}/{})",
-                                        reconnect_attempts + 1, MAX_RECONNECT_ATTEMPTS);
+                                        reconnect_attempts + 1, max_reconnect_attempts);
 
                                 match TcpStream::connect(&server_addr).await {
                                     Ok(new_stream) => {

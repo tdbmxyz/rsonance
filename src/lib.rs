@@ -1,3 +1,31 @@
+//! # Mike - Audio Transmission Tool
+//!
+//! A Rust tool that captures microphone audio and transmits it to another device for playback
+//! through a virtual audio input device. This enables remote desktop software to capture audio
+//! from a remote microphone.
+//!
+//! ## Architecture
+//!
+//! - **Transmitter**: Captures microphone audio using `cpal` and streams via TCP
+//! - **Receiver**: Creates virtual microphone input and pipes received audio
+//! - **Core**: Real-time audio streaming with minimal latency and reconnection support
+//!
+//! ## Example Usage
+//!
+//! ```no_run
+//! use mike::{setup_virtual_microphone, cleanup_virtual_microphone, VirtualMicResult};
+//!
+//! // Set up virtual microphone
+//! match setup_virtual_microphone() {
+//!     Ok(VirtualMicResult::Success) => println!("Virtual microphone created"),
+//!     Ok(VirtualMicResult::Failed) => eprintln!("Failed to create virtual microphone"),
+//!     Err(e) => eprintln!("Error: {}", e),
+//! }
+//!
+//! // Later, clean up
+//! cleanup_virtual_microphone().unwrap();
+//! ```
+
 use anyhow::Result;
 use std::process::Command;
 
