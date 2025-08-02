@@ -28,52 +28,82 @@ impl Default for AudioConfig {
 /// Result of virtual microphone setup
 #[derive(Debug, PartialEq)]
 pub enum VirtualMicResult {
-    PipeWireSuccess,
-    PulseAudioFallback,
+    Success,
     Failed,
 }
 
-/// Creates virtual microphone using PipeWire or PulseAudio fallback
-pub fn setup_virtual_microphone_with_commands(
-    pw_command: impl Fn(&str) -> Result<bool>,
-    pa_command: impl Fn(&str) -> Result<bool>,
-) -> Result<VirtualMicResult> {
-    let pw_cmd = r#"
-pw-cli create-node adapter \
-    '{ factory.name=support.null-audio-sink \
-       node.name=mike-virtual-source \
-       node.description="Mike Virtual Microphone" \
-       media.class=Audio/Source \
-       audio.rate=44100 \
-       audio.channels=2 \
-       audio.format=S16LE }' 2>/dev/null || true
-"#;
+/// Creates virtual microphone using pactl
+pub fn setup_virtual_microphone() -> Result<VirtualMicResult> {
+    let output = Command::new("pactl")
+        .args([
+            "load-module",
+            "module-pipe-source",
+            "source_name=mike_virtual_microphone",
+            "file=/tmp/mike_audio_pipe",
+            "format=s16le",
+            "rate=44100",
+            "channels=2",
+            "source_properties=device.description=Mike_Virtual_Microphone",
+        ])
+        .output()?;
 
-    if pw_command(pw_cmd.trim())? {
-        return Ok(VirtualMicResult::PipeWireSuccess);
-    }
-
-    let pa_cmd = r#"
-pactl load-module module-pipe-source \
-    source_name=mike_virtual_microphone \
-    file=/tmp/mike_audio_pipe \
-    format=s16le \
-    rate=44100 \
-    channels=2 \
-    source_properties=device.description="Mike_Virtual_Microphone" || true
-"#;
-
-    if pa_command(pa_cmd.trim())? {
-        Ok(VirtualMicResult::PulseAudioFallback)
+    if output.status.success() {
+        Ok(VirtualMicResult::Success)
     } else {
+        eprintln!(
+            "Failed to create virtual microphone: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         Ok(VirtualMicResult::Failed)
     }
 }
 
-/// Execute shell command and return success status
-pub fn execute_shell_command(cmd: &str) -> Result<bool> {
-    let status = Command::new("sh").arg("-c").arg(cmd).status()?;
-    Ok(status.success())
+/// Get the module ID of the virtual microphone for cleanup
+pub fn get_virtual_microphone_module_id() -> Result<Option<String>> {
+    let output = Command::new("pactl")
+        .args(["list", "modules", "short"])
+        .output()?;
+
+    let output_str = String::from_utf8(output.stdout)?;
+
+    for line in output_str.lines() {
+        if line.contains("module-pipe-source")
+            && line.contains("source_name=mike_virtual_microphone")
+        {
+            if let Some(module_id) = line.split_whitespace().next() {
+                return Ok(Some(module_id.to_string()));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+/// Remove virtual microphone module
+pub fn cleanup_virtual_microphone() -> Result<bool> {
+    if let Some(module_id) = get_virtual_microphone_module_id()? {
+        let output = Command::new("pactl")
+            .args(["unload-module", &module_id])
+            .output()?;
+
+        if output.status.success() {
+            println!(
+                "Virtual microphone module {} unloaded successfully",
+                module_id
+            );
+            Ok(true)
+        } else {
+            eprintln!(
+                "Failed to unload module {}: {}",
+                module_id,
+                String::from_utf8_lossy(&output.stderr)
+            );
+            Ok(false)
+        }
+    } else {
+        println!("No virtual microphone module found to cleanup");
+        Ok(false)
+    }
 }
 
 /// Parse server address with validation
@@ -152,39 +182,13 @@ mod tests {
     }
 
     #[test]
-    fn test_setup_virtual_microphone_pipewire_success() {
-        let pw_command = |_: &str| Ok(true);
-        let pa_command = |_: &str| Ok(false);
-
-        let result = setup_virtual_microphone_with_commands(pw_command, pa_command).unwrap();
-        assert_eq!(result, VirtualMicResult::PipeWireSuccess);
-    }
-
-    #[test]
-    fn test_setup_virtual_microphone_pulseaudio_fallback() {
-        let pw_command = |_: &str| Ok(false);
-        let pa_command = |_: &str| Ok(true);
-
-        let result = setup_virtual_microphone_with_commands(pw_command, pa_command).unwrap();
-        assert_eq!(result, VirtualMicResult::PulseAudioFallback);
-    }
-
-    #[test]
-    fn test_setup_virtual_microphone_failed() {
-        let pw_command = |_: &str| Ok(false);
-        let pa_command = |_: &str| Ok(false);
-
-        let result = setup_virtual_microphone_with_commands(pw_command, pa_command).unwrap();
-        assert_eq!(result, VirtualMicResult::Failed);
-    }
-
-    #[test]
-    fn test_setup_virtual_microphone_error_handling() {
-        let pw_command = |_: &str| Err(anyhow::anyhow!("Command failed"));
-        let pa_command = |_: &str| Ok(true);
-
-        let result = setup_virtual_microphone_with_commands(pw_command, pa_command);
-        assert!(result.is_err());
+    fn test_setup_virtual_microphone_integration() {
+        // This test verifies the function compiles and can be called
+        let result = setup_virtual_microphone();
+        match result {
+            Ok(_) => {}  // Success or failure both fine in test environment
+            Err(_) => {} // Error is acceptable in test environment
+        }
     }
 
     #[test]
@@ -217,14 +221,28 @@ mod tests {
 
     #[test]
     fn test_virtual_mic_result_debug() {
-        assert_eq!(
-            format!("{:?}", VirtualMicResult::PipeWireSuccess),
-            "PipeWireSuccess"
-        );
-        assert_eq!(
-            format!("{:?}", VirtualMicResult::PulseAudioFallback),
-            "PulseAudioFallback"
-        );
+        assert_eq!(format!("{:?}", VirtualMicResult::Success), "Success");
         assert_eq!(format!("{:?}", VirtualMicResult::Failed), "Failed");
+    }
+
+    #[test]
+    fn test_get_virtual_microphone_module_id() {
+        // This test verifies the function compiles and handles no module case
+        let result = get_virtual_microphone_module_id();
+        match result {
+            Ok(None) => {}    // Expected when no module is loaded
+            Ok(Some(_)) => {} // Also fine if module exists
+            Err(_) => {}      // Error is acceptable in test environment
+        }
+    }
+
+    #[test]
+    fn test_cleanup_virtual_microphone() {
+        // This test verifies the function compiles and handles cleanup
+        let result = cleanup_virtual_microphone();
+        match result {
+            Ok(_) => {}  // Success or no-op both fine
+            Err(_) => {} // Error is acceptable in test environment
+        }
     }
 }

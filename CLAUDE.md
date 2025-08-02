@@ -37,7 +37,8 @@ In your remote desktop application, select "Mike_Virtual_Microphone" as the micr
 - **Low Latency**: Optimized for real-time audio transmission
 - **Auto-Reconnection**: Transmitter automatically reconnects if connection drops
 - **Multiple Formats**: Supports F32, I16, and U16 audio sample formats
-- **PipeWire Native**: Primary support for PipeWire with PulseAudio fallback
+- **PulseAudio Compatible**: Works with PulseAudio and PipeWire (via PA compatibility)
+- **Auto-Cleanup**: Automatically removes virtual device on exit (Ctrl+C)
 
 ## Commands
 - Build: `cargo build --release`
@@ -55,15 +56,20 @@ In your remote desktop application, select "Mike_Virtual_Microphone" as the micr
 - **Error Handling**: Proper error propagation with anyhow
 
 ## System Requirements
-- Linux with PipeWire (recommended) or PulseAudio
-- PipeWire tools: `pw-cli`, `pw-cat` (usually included with PipeWire)
+- Linux with PulseAudio or PipeWire (with PulseAudio compatibility)
+- `pactl` command (usually included with PulseAudio/PipeWire)
 - Network connectivity between transmitter and receiver
 - Microphone on transmitter machine
 
+## Cleanup
+- The receiver automatically cleans up the virtual microphone when you press Ctrl+C
+- Virtual device is completely removed from the system
+- FIFO pipe is also cleaned up automatically
+
 ## Troubleshooting
-- Check if PipeWire is running: `systemctl --user status pipewire`
-- List audio sources: `pw-cli list-objects | grep Audio/Source`
-- For PulseAudio fallback, check: `pactl list sources`
-- Verify virtual microphone: Look for "Mike Virtual Microphone" in audio settings
+- Check if PulseAudio/PipeWire is running: `pactl info`
+- List audio sources: `pactl list sources short`
+- Verify virtual microphone: Look for "mike_virtual_microphone" in sources
 - Ensure firewall allows TCP connections on port 8080
-- On Hyprland/Wayland: Make sure PipeWire session is properly configured
+- Manual cleanup if needed: `pactl unload-module <module_id>` (find ID with `pactl list modules short | grep pipe-source`)
+- On Hyprland/Wayland: Ensure audio session is properly configured
