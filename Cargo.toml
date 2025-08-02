@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.98"
 cpal = "0.16.0"
-# pipewire = "0.8.0"  # Disabled for now
+tokio = { version = "1.47.1", features = ["full"] }
 
 [[bin]]
 name = "receiver"

@@ -1,84 +1,114 @@
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use std::io::Read;
+use std::fs::OpenOptions;
+use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::{Arc, Mutex};
+use std::path::Path;
+use std::process::Command;
 use std::thread;
 
-fn main() {
-    let host = cpal::default_host();
-    let device = host
-        .default_output_device()
-        .expect("no output device available");
-    let config = device.default_output_config().unwrap();
+fn main() -> anyhow::Result<()> {
+    println!("Virtual microphone server starting...");
 
-    let sample_format = config.sample_format();
-    let config: cpal::StreamConfig = config.into();
+    setup_virtual_microphone()?;
 
-    let listener = TcpListener::bind("0.0.0.0:8080").expect("failed to bind server port");
-    println!("Server listening for audio connections...");
+    let listener = TcpListener::bind("0.0.0.0:8080")?;
+    println!("Server listening on port 8080...");
+    println!("Virtual microphone 'mike-virtual-mic' created");
+    println!("Remote desktop software can now use this as a microphone input");
 
     for stream in listener.incoming() {
-        let stream = stream.unwrap();
-        let device = device.clone();
-        let config = config.clone();
+        let stream = stream?;
 
         thread::spawn(move || {
-            let mut stream = stream;
-            match sample_format {
-                cpal::SampleFormat::F32 => play_audio::<f32>(&device, &config, &mut stream),
-                cpal::SampleFormat::I16 => play_audio::<i16>(&device, &config, &mut stream),
-                cpal::SampleFormat::U16 => play_audio::<u16>(&device, &config, &mut stream),
-                _ => eprintln!("Unsupported sample format"),
+            if let Err(e) = handle_audio_stream(stream) {
+                eprintln!("Error handling audio stream: {}", e);
             }
         });
     }
+
+    Ok(())
 }
 
-fn play_audio<T>(device: &cpal::Device, config: &cpal::StreamConfig, stream: &mut TcpStream)
-where
-    T: cpal::Sample + Default + cpal::SizedSample + Send + 'static,
-{
-    let buffer = Arc::new(Mutex::new(vec![T::default(); 1024]));
-    let buffer_clone = buffer.clone();
+fn setup_virtual_microphone() -> anyhow::Result<()> {
+    let module_cmd = r#"
+pactl load-module module-pipe-source \
+    source_name=mike_virtual_microphone \
+    file=/tmp/mike_audio_pipe \
+    format=s16le \
+    rate=44100 \
+    channels=2 \
+    source_properties=device.description="Mike_Virtual_Microphone" || true
+"#;
 
-    let err_fn = |err| eprintln!("an error occurred on stream: {}", err);
-    let output_stream = device
-        .build_output_stream(
-            config,
-            move |data: &mut [T], _| {
-                if let Ok(buffer) = buffer_clone.lock() {
-                    let len = data.len().min(buffer.len());
-                    data[..len].copy_from_slice(&buffer[..len]);
-                }
-            },
-            err_fn,
-            None,
-        )
-        .unwrap();
+    let status = Command::new("sh")
+        .arg("-c")
+        .arg(module_cmd.trim())
+        .status()?;
 
-    output_stream.play().unwrap();
+    if !status.success() {
+        println!("Warning: Could not load PulseAudio pipe source module");
+        println!("Trying alternative approach...");
 
-    // Read audio data and update buffer
-    let mut raw = vec![0u8; 1024 * std::mem::size_of::<T>()];
-    loop {
-        if let Ok(n) = stream.read(&mut raw) {
-            if n == 0 {
-                break;
-            }
-            if let Ok(mut buffer) = buffer.lock() {
-                let expected_samples = n / std::mem::size_of::<T>();
-                if n % std::mem::size_of::<T>() == 0
-                    && expected_samples <= raw.len() / std::mem::size_of::<T>()
-                {
-                    let samples = unsafe {
-                        std::slice::from_raw_parts(raw.as_ptr() as *const T, expected_samples)
-                    };
-                    let copy_len = samples.len().min(buffer.len());
-                    buffer[..copy_len].copy_from_slice(&samples[..copy_len]);
-                }
-            }
-        } else {
-            break;
-        }
+        let alt_cmd = r#"
+pactl load-module module-null-sink \
+    sink_name=mike_null_sink \
+    sink_properties=device.description="Mike_Virtual_Sink"
+
+pactl load-module module-remap-source \
+    master=mike_null_sink.monitor \
+    source_name=mike_virtual_microphone \
+    source_properties=device.description="Mike_Virtual_Microphone"
+"#;
+
+        let _ = Command::new("sh").arg("-c").arg(alt_cmd.trim()).status();
     }
+
+    Ok(())
+}
+
+fn handle_audio_stream(mut tcp_stream: TcpStream) -> anyhow::Result<()> {
+    let fifo_path = "/tmp/mike_audio_pipe";
+
+    if Path::new(fifo_path).exists() {
+        std::fs::remove_file(fifo_path)?;
+    }
+
+    let status = Command::new("mkfifo").arg(fifo_path).status()?;
+
+    if !status.success() {
+        return Err(anyhow::anyhow!("Failed to create audio pipe"));
+    }
+
+    println!("Audio pipe created at {}", fifo_path);
+
+    let mut buffer = vec![0u8; 4096];
+
+    let pipe_writer = thread::spawn(move || -> anyhow::Result<()> {
+        let mut fifo = OpenOptions::new().write(true).open(fifo_path)?;
+
+        loop {
+            match tcp_stream.read(&mut buffer) {
+                Ok(0) => {
+                    println!("Client disconnected");
+                    break;
+                }
+                Ok(n) => {
+                    if let Err(e) = fifo.write_all(&buffer[..n]) {
+                        eprintln!("Failed to write to audio pipe: {}", e);
+                        break;
+                    }
+                }
+                Err(e) => {
+                    eprintln!("TCP read error: {}", e);
+                    break;
+                }
+            }
+        }
+        Ok(())
+    });
+
+    pipe_writer
+        .join()
+        .map_err(|_| anyhow::anyhow!("Pipe writer thread panicked"))??;
+
+    Ok(())
 }

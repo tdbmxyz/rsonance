@@ -1,102 +1,122 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use std::io::Write;
-use std::net::TcpStream;
-use std::sync::{Arc, Mutex};
+use tokio::io::AsyncWriteExt;
+use tokio::net::TcpStream;
+use tokio::sync::mpsc;
 
-fn main() {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let server_addr = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "127.0.0.1:8080".to_string());
+
+    println!("Connecting to server at {}...", server_addr);
+
     let host = cpal::default_host();
     let device = host
         .default_input_device()
-        .expect("no input device available");
-    let config = device.default_input_config().unwrap();
+        .ok_or_else(|| anyhow::anyhow!("No input device available"))?;
 
-    let stream = Arc::new(Mutex::new(None));
-    let server_addr = "127.0.0.1:8080";
-
-    let stream_clone = stream.clone();
-    let err_fn = |err| eprintln!("an error occurred on stream: {}", err);
-
+    let config = device.default_input_config()?;
     let sample_format = config.sample_format();
-    let config = config.into();
+    let config: cpal::StreamConfig = config.into();
 
-    let tcp_stream = TcpStream::connect(server_addr).expect("failed to connect to server");
+    println!(
+        "Using audio format: {:?} at {} Hz with {} channels",
+        sample_format, config.sample_rate.0, config.channels
+    );
 
-    let tcp_stream = Arc::new(Mutex::new(tcp_stream));
+    let tcp_stream = TcpStream::connect(&server_addr).await?;
+    println!("Connected to server successfully");
 
-    let new_stream = match sample_format {
-        cpal::SampleFormat::F32 => {
-            let tcp_stream = tcp_stream.clone();
-            device.build_input_stream(
-                &config,
-                move |data: &[f32], _| {
-                    let bytes = unsafe {
-                        std::slice::from_raw_parts(
-                            data.as_ptr() as *const u8,
-                            data.len() * std::mem::size_of::<f32>(),
-                        )
-                    };
-                    if let Ok(mut stream) = tcp_stream.lock() {
-                        let _ = stream.write_all(bytes);
-                    }
-                },
-                err_fn,
-                None,
-            )
+    let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
+
+    let err_fn = |err| eprintln!("Audio stream error: {}", err);
+
+    let stream = match sample_format {
+        cpal::SampleFormat::F32 => build_input_stream::<f32>(&device, &config, tx, err_fn)?,
+        cpal::SampleFormat::I16 => build_input_stream::<i16>(&device, &config, tx, err_fn)?,
+        cpal::SampleFormat::U16 => build_input_stream::<u16>(&device, &config, tx, err_fn)?,
+        _ => {
+            return Err(anyhow::anyhow!(
+                "Unsupported sample format: {:?}",
+                sample_format
+            ));
         }
-        cpal::SampleFormat::I16 => {
-            let tcp_stream = tcp_stream.clone();
-            device.build_input_stream(
-                &config,
-                move |data: &[i16], _| {
-                    let bytes = unsafe {
-                        std::slice::from_raw_parts(
-                            data.as_ptr() as *const u8,
-                            data.len() * std::mem::size_of::<i16>(),
-                        )
-                    };
-                    if let Ok(mut stream) = tcp_stream.lock() {
-                        let _ = stream.write_all(bytes);
-                    }
-                },
-                err_fn,
-                None,
-            )
-        }
-        cpal::SampleFormat::U16 => {
-            let tcp_stream = tcp_stream.clone();
-            device.build_input_stream(
-                &config,
-                move |data: &[u16], _| {
-                    let bytes = unsafe {
-                        std::slice::from_raw_parts(
-                            data.as_ptr() as *const u8,
-                            data.len() * std::mem::size_of::<u16>(),
-                        )
-                    };
-                    if let Ok(mut stream) = tcp_stream.lock() {
-                        let _ = stream.write_all(bytes);
-                    }
-                },
-                err_fn,
-                None,
-            )
-        }
-        _ => panic!("Unsupported sample format"),
-    }
-    .unwrap();
+    };
 
-    *stream_clone.lock().unwrap() = Some(new_stream);
+    stream.play()?;
+    println!("Started streaming microphone audio... Press Ctrl+C to stop.");
 
-    stream_clone
-        .lock()
-        .unwrap()
-        .as_ref()
-        .unwrap()
-        .play()
-        .unwrap();
+    let mut tcp_stream = tcp_stream;
+    let mut reconnect_attempts = 0;
+    const MAX_RECONNECT_ATTEMPTS: u32 = 5;
 
-    println!("Streaming audio to server at {server_addr}... Press Ctrl+C to stop.");
     loop {
-        std::thread::sleep(std::time::Duration::from_secs(1));
+        tokio::select! {
+            data = rx.recv() => {
+                match data {
+                    Some(audio_data) => {
+                        if let Err(e) = tcp_stream.write_all(&audio_data).await {
+                            eprintln!("Failed to send audio data: {}", e);
+
+                            if reconnect_attempts < MAX_RECONNECT_ATTEMPTS {
+                                println!("Attempting to reconnect... ({}/{})",
+                                        reconnect_attempts + 1, MAX_RECONNECT_ATTEMPTS);
+
+                                match TcpStream::connect(&server_addr).await {
+                                    Ok(new_stream) => {
+                                        tcp_stream = new_stream;
+                                        reconnect_attempts = 0;
+                                        println!("Reconnected successfully");
+                                    }
+                                    Err(e) => {
+                                        eprintln!("Reconnection failed: {}", e);
+                                        reconnect_attempts += 1;
+                                        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                                    }
+                                }
+                            } else {
+                                return Err(anyhow::anyhow!("Max reconnection attempts reached"));
+                            }
+                        } else {
+                            reconnect_attempts = 0;
+                        }
+                    }
+                    None => break,
+                }
+            }
+        }
     }
+
+    Ok(())
+}
+
+fn build_input_stream<T>(
+    device: &cpal::Device,
+    config: &cpal::StreamConfig,
+    tx: mpsc::UnboundedSender<Vec<u8>>,
+    err_fn: impl Fn(cpal::StreamError) + Send + 'static,
+) -> anyhow::Result<cpal::Stream>
+where
+    T: cpal::Sample + cpal::SizedSample + Send + 'static,
+{
+    let stream = device.build_input_stream(
+        config,
+        move |data: &[T], _| {
+            let bytes = unsafe {
+                std::slice::from_raw_parts(
+                    data.as_ptr() as *const u8,
+                    data.len() * std::mem::size_of::<T>(),
+                )
+            };
+
+            if let Err(e) = tx.send(bytes.to_vec()) {
+                eprintln!("Failed to send audio data to channel: {}", e);
+            }
+        },
+        err_fn,
+        None,
+    )?;
+
+    Ok(stream)
 }
