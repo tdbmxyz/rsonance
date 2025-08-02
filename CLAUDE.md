@@ -37,21 +37,33 @@ In your remote desktop application, select "Mike_Virtual_Microphone" as the micr
 - **Low Latency**: Optimized for real-time audio transmission
 - **Auto-Reconnection**: Transmitter automatically reconnects if connection drops
 - **Multiple Formats**: Supports F32, I16, and U16 audio sample formats
-- **Cross-Platform**: Works on Linux with PulseAudio/PipeWire
+- **PipeWire Native**: Primary support for PipeWire with PulseAudio fallback
 
 ## Commands
 - Build: `cargo build --release`
 - Run receiver: `cargo run --bin receiver`
 - Run transmitter: `cargo run --bin transmitter [IP:PORT]`
 - Test: `cargo test`
+- Lint: `cargo clippy --all-targets -- -D warnings`
+- Build all targets: `cargo build --all-targets`
 - Add dependencies: `cargo add <crate_name>` (preferred over editing Cargo.toml directly)
 
+## Development
+- **Testing**: Comprehensive unit tests for all core functions
+- **Linting**: Clippy-clean codebase with warnings as errors
+- **Modular Design**: Core logic extracted to library for testability
+- **Error Handling**: Proper error propagation with anyhow
+
 ## System Requirements
-- Linux with PulseAudio or PipeWire
+- Linux with PipeWire (recommended) or PulseAudio
+- PipeWire tools: `pw-cli`, `pw-cat` (usually included with PipeWire)
 - Network connectivity between transmitter and receiver
 - Microphone on transmitter machine
 
 ## Troubleshooting
-- If virtual microphone creation fails, you may need to manually create PulseAudio modules
-- Check `pactl list sources` to verify the virtual microphone exists
+- Check if PipeWire is running: `systemctl --user status pipewire`
+- List audio sources: `pw-cli list-objects | grep Audio/Source`
+- For PulseAudio fallback, check: `pactl list sources`
+- Verify virtual microphone: Look for "Mike Virtual Microphone" in audio settings
 - Ensure firewall allows TCP connections on port 8080
+- On Hyprland/Wayland: Make sure PipeWire session is properly configured

@@ -1,13 +1,12 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use mike::parse_server_address;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let server_addr = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "127.0.0.1:8080".to_string());
+    let server_addr = parse_server_address(std::env::args().nth(1));
 
     println!("Connecting to server at {}...", server_addr);
 
@@ -104,10 +103,7 @@ where
         config,
         move |data: &[T], _| {
             let bytes = unsafe {
-                std::slice::from_raw_parts(
-                    data.as_ptr() as *const u8,
-                    data.len() * std::mem::size_of::<T>(),
-                )
+                std::slice::from_raw_parts(data.as_ptr() as *const u8, std::mem::size_of_val(data))
             };
 
             if let Err(e) = tx.send(bytes.to_vec()) {
