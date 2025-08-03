@@ -1,44 +1,54 @@
-use clap::Parser;
+//! Audio transmitter module that captures microphone input and streams it to a remote receiver
+
+use crate::validate_buffer_size;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use mike::validate_buffer_size;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 
-/// Audio transmitter that captures microphone input and streams it to a remote receiver
-#[derive(Parser)]
-#[command(name = "mike-transmitter")]
-#[command(about = "Stream microphone audio to a remote virtual microphone")]
-#[command(version)]
-struct Args {
-    /// Server address to connect to
-    #[arg(short = 'H', long, default_value = "127.0.0.1")]
+/// Run the transmitter with the given configuration
+/// 
+/// This function captures audio from the default microphone and streams it to
+/// a remote receiver over TCP. It supports automatic reconnection if the connection
+/// is lost.
+/// 
+/// # Arguments
+/// 
+/// * `host` - Server address to connect to (e.g., "127.0.0.1" or "192.168.1.100")
+/// * `port` - Server port to connect to
+/// * `buffer_size` - Audio buffer size in bytes (affects latency)
+/// * `reconnect_attempts` - Maximum number of reconnection attempts on failure
+/// * `verbose` - Enable verbose logging output
+/// 
+/// # Returns
+/// 
+/// Returns `Ok(())` on successful completion, or an error if audio capture or connection fails
+/// 
+/// # Example
+/// 
+/// ```no_run
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// mike::transmitter::run_transmitter(
+///     "127.0.0.1".to_string(),
+///     8080,
+///     4096,
+///     5,
+///     true
+/// ).await?;
+/// # Ok(())
+/// # }
+/// ```
+pub async fn run_transmitter(
     host: String,
-
-    /// Server port to connect to
-    #[arg(short, long, default_value_t = 8080)]
     port: u16,
-
-    /// Audio buffer size in bytes (affects latency)
-    #[arg(short, long, default_value_t = 4096)]
     buffer_size: usize,
-
-    /// Reconnection attempts on connection failure
-    #[arg(short, long, default_value_t = 5)]
     reconnect_attempts: u32,
-
-    /// Enable verbose output
-    #[arg(short, long)]
     verbose: bool,
-}
-
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    let args = Args::parse();
-    let server_addr = format!("{}:{}", args.host, args.port);
+) -> anyhow::Result<()> {
+    let server_addr = format!("{}:{}", host, port);
 
     // Validate buffer size
-    validate_buffer_size(args.buffer_size)?;
+    validate_buffer_size(buffer_size)?;
 
     println!("Connecting to server at {}...", server_addr);
 
@@ -51,13 +61,13 @@ async fn main() -> anyhow::Result<()> {
     let sample_format = config.sample_format();
     let config: cpal::StreamConfig = config.into();
 
-    if args.verbose {
+    if verbose {
         println!(
             "Using audio format: {:?} at {} Hz with {} channels",
             sample_format, config.sample_rate.0, config.channels
         );
-        println!("Buffer size: {} bytes", args.buffer_size);
-        println!("Max reconnection attempts: {}", args.reconnect_attempts);
+        println!("Buffer size: {} bytes", buffer_size);
+        println!("Max reconnection attempts: {}", reconnect_attempts);
     }
 
     let tcp_stream = TcpStream::connect(&server_addr).await?;
@@ -65,7 +75,7 @@ async fn main() -> anyhow::Result<()> {
 
     let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
 
-    let verbose_err = args.verbose;
+    let verbose_err = verbose;
     let err_fn = move |err| {
         if verbose_err {
             eprintln!("Audio stream error: {}", err);
@@ -88,8 +98,8 @@ async fn main() -> anyhow::Result<()> {
     println!("Started streaming microphone audio... Press Ctrl+C to stop.");
 
     let mut tcp_stream = tcp_stream;
-    let mut reconnect_attempts = 0;
-    let max_reconnect_attempts = args.reconnect_attempts;
+    let mut reconnect_attempts_count = 0;
+    let max_reconnect_attempts = reconnect_attempts;
 
     loop {
         tokio::select! {
@@ -99,19 +109,19 @@ async fn main() -> anyhow::Result<()> {
                         if let Err(e) = tcp_stream.write_all(&audio_data).await {
                             eprintln!("Failed to send audio data: {}", e);
 
-                            if reconnect_attempts < max_reconnect_attempts {
+                            if reconnect_attempts_count < max_reconnect_attempts {
                                 println!("Attempting to reconnect... ({}/{})",
-                                        reconnect_attempts + 1, max_reconnect_attempts);
+                                        reconnect_attempts_count + 1, max_reconnect_attempts);
 
                                 match TcpStream::connect(&server_addr).await {
                                     Ok(new_stream) => {
                                         tcp_stream = new_stream;
-                                        reconnect_attempts = 0;
+                                        reconnect_attempts_count = 0;
                                         println!("Reconnected successfully");
                                     }
                                     Err(e) => {
                                         eprintln!("Reconnection failed: {}", e);
-                                        reconnect_attempts += 1;
+                                        reconnect_attempts_count += 1;
                                         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                                     }
                                 }
@@ -119,7 +129,7 @@ async fn main() -> anyhow::Result<()> {
                                 return Err(anyhow::anyhow!("Max reconnection attempts reached"));
                             }
                         } else {
-                            reconnect_attempts = 0;
+                            reconnect_attempts_count = 0;
                         }
                     }
                     None => break,
@@ -131,6 +141,22 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Build an input stream for the specified audio sample type
+/// 
+/// This function creates a CPAL input stream that captures audio data and sends it
+/// through the provided channel. It handles different sample formats (F32, I16, U16)
+/// and converts them all to S16LE format for compatibility.
+/// 
+/// # Arguments
+/// 
+/// * `device` - The audio input device to capture from
+/// * `config` - Audio stream configuration (sample rate, channels, etc.)
+/// * `tx` - Channel sender for audio data
+/// * `err_fn` - Error callback function for stream errors
+/// 
+/// # Returns
+/// 
+/// Returns the created CPAL stream or an error if creation fails
 fn build_input_stream<T>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
@@ -146,7 +172,7 @@ where
     let packet_count = Arc::new(AtomicUsize::new(0));
     let packet_count_clone = packet_count.clone();
     
-    // Print debug info every 100 packets (about every 2 seconds at typical rates)
+    // Print debug info every 5 seconds
     std::thread::spawn(move || {
         loop {
             std::thread::sleep(std::time::Duration::from_secs(5));
@@ -176,6 +202,24 @@ where
 }
 
 /// Convert audio samples to S16LE format for PulseAudio compatibility
+/// 
+/// This function takes audio samples of any supported format (F32, I16, U16) and
+/// converts them to signed 16-bit little-endian format, which is compatible with
+/// PulseAudio and most audio systems.
+/// 
+/// # Arguments
+/// 
+/// * `data` - Slice of audio samples to convert
+/// 
+/// # Returns
+/// 
+/// Vector of bytes in S16LE format
+/// 
+/// # Notes
+/// 
+/// - F32 samples are clamped to [-1.0, 1.0] range before conversion
+/// - U16 samples are converted by subtracting 32768 to center around zero
+/// - I16 samples are passed through unchanged
 fn convert_to_s16le<T>(data: &[T]) -> Vec<u8>
 where
     T: cpal::Sample + cpal::SizedSample + 'static,
@@ -285,7 +329,7 @@ mod tests {
             .map(|chunk| i16::from_le_bytes([chunk[0], chunk[1]]))
             .collect();
         
-        // All should be clamped to i16::MAX or i16::MIN
+        // All should be clamped to i16::MAX or close to i16::MIN
         assert_eq!(samples[0], i16::MAX);   // 2.0 clamped to 1.0
         assert_eq!(samples[1], -32767);    // -2.0 clamped to -1.0
         assert_eq!(samples[2], i16::MAX);   // Infinity clamped to 1.0

@@ -26,24 +26,60 @@
 //! cleanup_virtual_microphone().unwrap();
 //! ```
 
+pub mod receiver;
+pub mod transmitter;
+
 use anyhow::Result;
 use std::process::Command;
 
 /// Configuration for audio streaming
+/// 
+/// This struct holds the audio format configuration used for streaming
+/// between transmitter and receiver. It defines the sample rate, number
+/// of channels, and audio format.
+/// 
+/// # Examples
+/// 
+/// ```
+/// use mike::{AudioConfig, AudioFormat};
+/// 
+/// let config = AudioConfig::default();
+/// assert_eq!(config.sample_rate, 44100);
+/// assert_eq!(config.channels, 2);
+/// ```
 #[derive(Debug, Clone)]
 pub struct AudioConfig {
+    /// Sample rate in Hz (e.g., 44100, 48000)
     pub sample_rate: u32,
+    /// Number of audio channels (1 for mono, 2 for stereo)
     pub channels: u16,
+    /// Audio sample format
     pub format: AudioFormat,
 }
 
+/// Supported audio sample formats
+/// 
+/// This enum represents the different audio sample formats that can be
+/// used for audio streaming. Currently supports signed 16-bit little-endian
+/// and 32-bit floating point little-endian formats.
 #[derive(Debug, Clone)]
 pub enum AudioFormat {
+    /// Signed 16-bit little-endian format (most common)
     S16LE,
+    /// 32-bit floating point little-endian format
     F32LE,
 }
 
 impl Default for AudioConfig {
+    /// Returns the default audio configuration
+    /// 
+    /// Default settings are:
+    /// - Sample rate: 44100 Hz (CD quality)
+    /// - Channels: 2 (stereo)
+    /// - Format: S16LE (signed 16-bit little-endian)
+    /// 
+    /// These settings provide good compatibility with most audio systems
+    /// while maintaining reasonable quality and performance.
     fn default() -> Self {
         Self {
             sample_rate: 44100,
@@ -53,19 +89,110 @@ impl Default for AudioConfig {
     }
 }
 
-/// Result of virtual microphone setup
+/// Result of virtual microphone setup operation
+/// 
+/// This enum represents the outcome of attempting to create a virtual
+/// microphone using PulseAudio. It indicates whether the operation
+/// succeeded or failed.
+/// 
+/// # Examples
+/// 
+/// ```no_run
+/// use mike::{setup_virtual_microphone, VirtualMicResult};
+/// 
+/// match setup_virtual_microphone() {
+///     Ok(VirtualMicResult::Success) => println!("Virtual microphone created!"),
+///     Ok(VirtualMicResult::Failed) => eprintln!("Failed to create virtual microphone"),
+///     Err(e) => eprintln!("Error: {}", e),
+/// }
+/// ```
 #[derive(Debug, PartialEq)]
 pub enum VirtualMicResult {
+    /// Virtual microphone was created successfully
     Success,
+    /// Virtual microphone creation failed
     Failed,
 }
 
-/// Creates virtual microphone using pactl
+/// Creates a virtual microphone using default configuration
+/// 
+/// This function creates a virtual microphone device using PulseAudio's
+/// `pactl` command with default settings. The virtual microphone will
+/// appear as "mike_virtual_microphone" in the system's audio devices.
+/// 
+/// # Returns
+/// 
+/// Returns `Ok(VirtualMicResult::Success)` if the virtual microphone was
+/// created successfully, `Ok(VirtualMicResult::Failed)` if the operation
+/// failed, or `Err` if there was a system error.
+/// 
+/// # Examples
+/// 
+/// ```no_run
+/// use mike::{setup_virtual_microphone, VirtualMicResult};
+/// 
+/// match setup_virtual_microphone()? {
+///     VirtualMicResult::Success => println!("Virtual microphone ready!"),
+///     VirtualMicResult::Failed => eprintln!("Setup failed"),
+/// }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+/// 
+/// # Requirements
+/// 
+/// - PulseAudio must be running
+/// - `pactl` command must be available in PATH
+/// - User must have permissions to create audio devices
 pub fn setup_virtual_microphone() -> Result<VirtualMicResult> {
     setup_virtual_microphone_with_config("mike_virtual_microphone", "/tmp/mike_audio_pipe")
 }
 
-/// Creates virtual microphone using pactl with custom configuration
+/// Creates a virtual microphone with custom configuration
+/// 
+/// This function creates a virtual microphone device using PulseAudio's
+/// `pactl` command with custom source name and FIFO path. It first creates
+/// the required FIFO pipe, then loads the PulseAudio pipe-source module.
+/// 
+/// # Arguments
+/// 
+/// * `source_name` - Name for the virtual microphone source (e.g., "my_virtual_mic")
+/// * `fifo_path` - Path where the FIFO pipe will be created (e.g., "/tmp/my_audio_pipe")
+/// 
+/// # Returns
+/// 
+/// Returns `Ok(VirtualMicResult::Success)` if the virtual microphone was
+/// created successfully, `Ok(VirtualMicResult::Failed)` if the PulseAudio
+/// operation failed, or `Err` if there was a system error (e.g., FIFO creation failed).
+/// 
+/// # Examples
+/// 
+/// ```no_run
+/// use mike::{setup_virtual_microphone_with_config, VirtualMicResult};
+/// 
+/// let result = setup_virtual_microphone_with_config(
+///     "my_custom_mic",
+///     "/tmp/my_custom_pipe"
+/// )?;
+/// 
+/// match result {
+///     VirtualMicResult::Success => println!("Custom virtual microphone created!"),
+///     VirtualMicResult::Failed => eprintln!("PulseAudio operation failed"),
+/// }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+/// 
+/// # Requirements
+/// 
+/// - PulseAudio must be running
+/// - `pactl` and `mkfifo` commands must be available in PATH
+/// - User must have permissions to create files at `fifo_path`
+/// - User must have permissions to load PulseAudio modules
+/// 
+/// # Notes
+/// 
+/// - If a FIFO already exists at `fifo_path`, it will be removed and recreated
+/// - The virtual microphone will use S16LE format at 44100Hz with 2 channels
+/// - The source description will be the source name with underscores replaced by spaces
 pub fn setup_virtual_microphone_with_config(source_name: &str, fifo_path: &str) -> Result<VirtualMicResult> {
     // First, ensure the FIFO exists
     if std::path::Path::new(fifo_path).exists() {
@@ -104,6 +231,32 @@ pub fn setup_virtual_microphone_with_config(source_name: &str, fifo_path: &str) 
 }
 
 /// Get the module ID of the virtual microphone for cleanup
+/// 
+/// This function queries PulseAudio for loaded modules and searches for
+/// the virtual microphone module (module-pipe-source with source_name=mike_virtual_microphone).
+/// It returns the module ID if found, which can be used for cleanup.
+/// 
+/// # Returns
+/// 
+/// Returns `Ok(Some(module_id))` if the virtual microphone module is found,
+/// `Ok(None)` if no matching module is loaded, or `Err` if the query failed.
+/// 
+/// # Examples
+/// 
+/// ```no_run
+/// use mike::get_virtual_microphone_module_id;
+/// 
+/// match get_virtual_microphone_module_id()? {
+///     Some(module_id) => println!("Virtual microphone module ID: {}", module_id),
+///     None => println!("No virtual microphone module found"),
+/// }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+/// 
+/// # Requirements
+/// 
+/// - PulseAudio must be running
+/// - `pactl` command must be available in PATH
 pub fn get_virtual_microphone_module_id() -> Result<Option<String>> {
     let output = Command::new("pactl")
         .args(["list", "modules", "short"])
@@ -124,7 +277,40 @@ pub fn get_virtual_microphone_module_id() -> Result<Option<String>> {
     Ok(None)
 }
 
-/// Remove virtual microphone module
+/// Remove the virtual microphone module from PulseAudio
+/// 
+/// This function finds and unloads the virtual microphone module from PulseAudio.
+/// It first queries for the module ID, then attempts to unload it using `pactl`.
+/// 
+/// # Returns
+/// 
+/// Returns `Ok(true)` if a module was found and successfully unloaded,
+/// `Ok(false)` if no module was found or unloading failed, or `Err` if
+/// there was a system error during the operation.
+/// 
+/// # Examples
+/// 
+/// ```no_run
+/// use mike::cleanup_virtual_microphone;
+/// 
+/// match cleanup_virtual_microphone()? {
+///     true => println!("Virtual microphone cleaned up successfully"),
+///     false => println!("No virtual microphone found or cleanup failed"),
+/// }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+/// 
+/// # Requirements
+/// 
+/// - PulseAudio must be running
+/// - `pactl` command must be available in PATH
+/// - User must have permissions to unload PulseAudio modules
+/// 
+/// # Notes
+/// 
+/// This function specifically looks for the "mike_virtual_microphone" source.
+/// If you used a different source name with `setup_virtual_microphone_with_config`,
+/// you may need to manually unload the module using `pactl unload-module <id>`.
 pub fn cleanup_virtual_microphone() -> Result<bool> {
     if let Some(module_id) = get_virtual_microphone_module_id()? {
         let output = Command::new("pactl")
@@ -151,7 +337,35 @@ pub fn cleanup_virtual_microphone() -> Result<bool> {
     }
 }
 
-/// Parse server address with validation
+/// Parse and validate a server address string
+/// 
+/// This function takes an optional server address string and returns a properly
+/// formatted address with default values applied as needed. If no port is specified,
+/// it defaults to 8080. If the address is empty or None, it defaults to localhost.
+/// 
+/// # Arguments
+/// 
+/// * `addr` - Optional server address string (e.g., "192.168.1.100", "example.com:9090")
+/// 
+/// # Returns
+/// 
+/// Returns a formatted address string in the form "host:port"
+/// 
+/// # Examples
+/// 
+/// ```
+/// use mike::parse_server_address;
+/// 
+/// assert_eq!(parse_server_address(Some("192.168.1.100".to_string())), "192.168.1.100:8080");
+/// assert_eq!(parse_server_address(Some("example.com:9090".to_string())), "example.com:9090");
+/// assert_eq!(parse_server_address(None), "127.0.0.1:8080");
+/// assert_eq!(parse_server_address(Some("".to_string())), "127.0.0.1:8080");
+/// ```
+/// 
+/// # Default Values
+/// 
+/// - Default host: 127.0.0.1 (localhost)
+/// - Default port: 8080
 pub fn parse_server_address(addr: Option<String>) -> String {
     match addr {
         Some(addr) if !addr.trim().is_empty() => {
@@ -165,7 +379,45 @@ pub fn parse_server_address(addr: Option<String>) -> String {
     }
 }
 
-/// Validate audio buffer size
+/// Validate audio buffer size for streaming
+/// 
+/// This function validates that the provided buffer size is within acceptable
+/// limits for audio streaming. The buffer size affects latency and performance:
+/// smaller buffers reduce latency but may cause audio dropouts, while larger
+/// buffers increase latency but provide more stability.
+/// 
+/// # Arguments
+/// 
+/// * `size` - Buffer size in bytes to validate
+/// 
+/// # Returns
+/// 
+/// Returns `Ok(size)` if the buffer size is valid, or `Err` with a descriptive
+/// error message if the size is invalid.
+/// 
+/// # Validation Rules
+/// 
+/// - Buffer size must be greater than 0
+/// - Buffer size must not exceed 65536 bytes (64KB)
+/// 
+/// # Examples
+/// 
+/// ```
+/// use mike::validate_buffer_size;
+/// 
+/// assert_eq!(validate_buffer_size(4096).unwrap(), 4096);
+/// assert_eq!(validate_buffer_size(1024).unwrap(), 1024);
+/// 
+/// assert!(validate_buffer_size(0).is_err());
+/// assert!(validate_buffer_size(100000).is_err());
+/// ```
+/// 
+/// # Recommended Values
+/// 
+/// - 1024 bytes: Very low latency, may cause dropouts on slower systems
+/// - 4096 bytes: Good balance of latency and stability (default)
+/// - 8192 bytes: Higher latency but very stable
+/// - 16384 bytes: High latency, maximum stability
 pub fn validate_buffer_size(size: usize) -> Result<usize> {
     match size {
         0 => Err(anyhow::anyhow!("Buffer size cannot be zero")),

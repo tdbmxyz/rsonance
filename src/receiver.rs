@@ -1,8 +1,6 @@
-use clap::Parser;
-use mike::{
-    VirtualMicResult, cleanup_virtual_microphone, setup_virtual_microphone_with_config, 
-    validate_buffer_size,
-};
+//! Audio receiver module that creates a virtual microphone and receives audio streams
+
+use crate::{VirtualMicResult, cleanup_virtual_microphone, setup_virtual_microphone_with_config, validate_buffer_size};
 use signal_hook::{consts::SIGINT, iterator::Signals};
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
@@ -12,56 +10,60 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 
-/// Audio receiver that creates a virtual microphone and receives audio streams
-#[derive(Parser)]
-#[command(name = "mike-receiver")]
-#[command(about = "Create a virtual microphone and receive audio streams")]
-#[command(version)]
-struct Args {
-    /// Host address to bind to
-    #[arg(short = 'H', long, default_value = "0.0.0.0")]
+/// Run the receiver with the given configuration
+/// 
+/// This function sets up a virtual microphone, binds to the specified address/port,
+/// and handles incoming audio streams from transmitter clients.
+/// 
+/// # Arguments
+/// 
+/// * `host` - Host address to bind to (e.g., "0.0.0.0" or "127.0.0.1")
+/// * `port` - Port number to listen on
+/// * `buffer_size` - Audio buffer size in bytes (affects latency)
+/// * `microphone_name` - Name of the virtual microphone to create
+/// * `fifo_path` - Path where the FIFO pipe will be created
+/// * `verbose` - Enable verbose logging output
+/// 
+/// # Returns
+/// 
+/// Returns `Ok(())` on successful completion, or an error if setup fails
+/// 
+/// # Example
+/// 
+/// ```no_run
+/// mike::receiver::run_receiver(
+///     "0.0.0.0".to_string(),
+///     8080,
+///     4096,
+///     "my_virtual_mic".to_string(),
+///     "/tmp/my_audio_pipe".to_string(),
+///     true
+/// ).unwrap();
+/// ```
+pub fn run_receiver(
     host: String,
-
-    /// Port to listen on
-    #[arg(short, long, default_value_t = 8080)]
     port: u16,
-
-    /// Audio buffer size in bytes (affects latency)
-    #[arg(short, long, default_value_t = 4096)]
     buffer_size: usize,
-
-    /// Virtual microphone name
-    #[arg(short, long, default_value = "mike_virtual_microphone")]
     microphone_name: String,
-
-    /// FIFO pipe path for audio data
-    #[arg(short, long, default_value = "/tmp/mike_audio_pipe")]
     fifo_path: String,
-
-    /// Enable verbose output
-    #[arg(short, long)]
     verbose: bool,
-}
-
-fn main() -> anyhow::Result<()> {
-    let args = Args::parse();
-
+) -> anyhow::Result<()> {
     // Validate buffer size
-    validate_buffer_size(args.buffer_size)?;
+    validate_buffer_size(buffer_size)?;
 
     println!("Virtual microphone server starting...");
 
-    if args.verbose {
+    if verbose {
         println!("Configuration:");
-        println!("  Host: {}", args.host);
-        println!("  Port: {}", args.port);
-        println!("  Buffer size: {} bytes", args.buffer_size);
-        println!("  Microphone name: {}", args.microphone_name);
-        println!("  FIFO path: {}", args.fifo_path);
+        println!("  Host: {}", host);
+        println!("  Port: {}", port);
+        println!("  Buffer size: {} bytes", buffer_size);
+        println!("  Microphone name: {}", microphone_name);
+        println!("  FIFO path: {}", fifo_path);
     }
 
     println!("Setting up virtual microphone...");
-    let result = setup_virtual_microphone_with_config(&args.microphone_name, &args.fifo_path)?;
+    let result = setup_virtual_microphone_with_config(&microphone_name, &fifo_path)?;
     match result {
         VirtualMicResult::Success => {
             println!("Virtual microphone created successfully");
@@ -74,7 +76,7 @@ fn main() -> anyhow::Result<()> {
     // Set up signal handling for cleanup
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
-    let fifo_path_cleanup = args.fifo_path.clone();
+    let fifo_path_cleanup = fifo_path.clone();
 
     let mut signals = Signals::new([SIGINT])?;
     thread::spawn(move || {
@@ -100,10 +102,10 @@ fn main() -> anyhow::Result<()> {
         }
     });
 
-    let bind_addr = format!("{}:{}", args.host, args.port);
+    let bind_addr = format!("{}:{}", host, port);
     let listener = TcpListener::bind(&bind_addr)?;
     println!("Server listening on {}...", bind_addr);
-    println!("Virtual microphone '{}' created", args.microphone_name);
+    println!("Virtual microphone '{}' created", microphone_name);
     println!("Remote desktop software can now use this as a microphone input");
     println!("Press Ctrl+C to stop and cleanup");
 
@@ -113,9 +115,7 @@ fn main() -> anyhow::Result<()> {
         }
 
         let stream = stream?;
-        let fifo_path = args.fifo_path.clone();
-        let buffer_size = args.buffer_size;
-        let verbose = args.verbose;
+        let fifo_path = fifo_path.clone();
 
         thread::spawn(move || {
             if let Err(e) = handle_audio_stream(stream, fifo_path, buffer_size, verbose) {
@@ -127,6 +127,21 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Handle an individual audio stream from a transmitter client
+/// 
+/// This function reads audio data from a TCP stream and writes it to the FIFO pipe
+/// that feeds the virtual microphone.
+/// 
+/// # Arguments
+/// 
+/// * `tcp_stream` - The TCP connection from the transmitter
+/// * `fifo_path` - Path to the FIFO pipe for audio data
+/// * `buffer_size` - Size of the buffer for reading audio data
+/// * `verbose` - Enable verbose logging
+/// 
+/// # Returns
+/// 
+/// Returns `Ok(())` on successful completion, or an error if the stream fails
 fn handle_audio_stream(
     mut tcp_stream: TcpStream,
     fifo_path: String,
@@ -186,42 +201,6 @@ fn handle_audio_stream(
 mod tests {
     use super::*;
     use std::fs;
-
-    #[test]
-    fn test_args_parsing() {
-        use clap::Parser;
-        
-        // Test default values
-        let args = Args::try_parse_from(&["mike-receiver"]).unwrap();
-        assert_eq!(args.host, "0.0.0.0");
-        assert_eq!(args.port, 8080);
-        assert_eq!(args.buffer_size, 4096);
-        assert_eq!(args.microphone_name, "mike_virtual_microphone");
-        assert_eq!(args.fifo_path, "/tmp/mike_audio_pipe");
-        assert!(!args.verbose);
-    }
-
-    #[test]
-    fn test_args_parsing_custom() {
-        use clap::Parser;
-        
-        let args = Args::try_parse_from(&[
-            "mike-receiver",
-            "--host", "192.168.1.100",
-            "--port", "9090",
-            "--buffer-size", "8192",
-            "--microphone-name", "test_mic",
-            "--fifo-path", "/tmp/test_pipe",
-            "--verbose"
-        ]).unwrap();
-        
-        assert_eq!(args.host, "192.168.1.100");
-        assert_eq!(args.port, 9090);
-        assert_eq!(args.buffer_size, 8192);
-        assert_eq!(args.microphone_name, "test_mic");
-        assert_eq!(args.fifo_path, "/tmp/test_pipe");
-        assert!(args.verbose);
-    }
 
     #[test]
     fn test_handle_audio_stream_missing_fifo() {

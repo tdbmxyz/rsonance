@@ -15,25 +15,27 @@ A Rust tool that captures microphone audio and transmits it to another device fo
 
 ## Usage
 
+The tool now uses a single binary with subcommands for better organization and ease of use.
+
 ### 1. Start the Receiver (Virtual Microphone)
 On the remote desktop machine:
 ```bash
-cargo run --bin receiver [OPTIONS]
+cargo run -- receiver [OPTIONS]
 ```
 
 **Common usage examples:**
 ```bash
-# Start with default settings (localhost:8080)
-cargo run --bin receiver
+# Start with default settings (0.0.0.0:8080)
+cargo run -- receiver
 
-# Bind to all interfaces on custom port
-cargo run --bin receiver --host 0.0.0.0 --port 9090
+# Bind to specific interface and custom port
+cargo run -- receiver --host 127.0.0.1 --port 9090
 
 # Custom microphone name and verbose output
-cargo run --bin receiver --microphone-name my_virtual_mic --verbose
+cargo run -- receiver --microphone-name my_virtual_mic --verbose
 
 # Custom FIFO path and buffer size
-cargo run --bin receiver --fifo-path /tmp/my_audio_pipe --buffer-size 8192
+cargo run -- receiver --fifo-path /tmp/my_audio_pipe --buffer-size 8192
 ```
 
 This creates a virtual microphone device that remote desktop software can use.
@@ -41,22 +43,22 @@ This creates a virtual microphone device that remote desktop software can use.
 ### 2. Start the Transmitter (Microphone Capture)
 On the local machine with the microphone:
 ```bash
-cargo run --bin transmitter [OPTIONS]
+cargo run -- transmitter [OPTIONS]
 ```
 
 **Common usage examples:**
 ```bash
 # Connect to default localhost:8080
-cargo run --bin transmitter
+cargo run -- transmitter
 
 # Connect to remote server
-cargo run --bin transmitter --host 192.168.1.100 --port 9090
+cargo run -- transmitter --host 192.168.1.100 --port 9090
 
 # Enable verbose output and custom buffer size
-cargo run --bin transmitter --verbose --buffer-size 8192
+cargo run -- transmitter --verbose --buffer-size 8192
 
 # Set maximum reconnection attempts
-cargo run --bin transmitter --reconnect-attempts 10
+cargo run -- transmitter --reconnect-attempts 10
 ```
 
 ### 3. Configure Remote Desktop Software
@@ -72,15 +74,21 @@ In your remote desktop application, select "Mike_Virtual_Microphone" as the micr
 
 ## Commands
 - Build: `cargo build --release`
-- Run receiver: `cargo run --bin receiver [OPTIONS]`
-- Run transmitter: `cargo run --bin transmitter [OPTIONS]`
+- Run receiver: `cargo run -- receiver [OPTIONS]`
+- Run transmitter: `cargo run -- transmitter [OPTIONS]`
 - Test: `cargo test`
 - Lint: `cargo clippy --all-targets -- -D warnings`
 - Build all targets: `cargo build --all-targets`
 - Add dependencies: `cargo add <crate_name>` (preferred over editing Cargo.toml directly)
-- Help: `cargo run --bin <receiver|transmitter> -- --help`
+- Help: `cargo run -- --help` or `cargo run -- <receiver|transmitter> --help`
 
 ## CLI Options
+
+Use `cargo run -- --help` to see all available commands and options.
+
+### Main Commands
+- `receiver`: Create a virtual microphone and receive audio streams
+- `transmitter`: Stream microphone audio to a remote virtual microphone
 
 ### Receiver Options
 - `--host/-H <HOST>`: Host address to bind to (default: 0.0.0.0)
