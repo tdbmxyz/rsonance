@@ -45,12 +45,12 @@ pub async fn run_transmitter(
     reconnect_attempts: u32,
     verbose: bool,
 ) -> anyhow::Result<()> {
-    let server_addr = format!("{}:{}", host, port);
+    let server_addr = format!("{host}:{port}");
 
     // Validate buffer size
     validate_buffer_size(buffer_size)?;
 
-    println!("Connecting to server at {}...", server_addr);
+    println!("Connecting to server at {server_addr}...");
 
     let host = cpal::default_host();
     let device = host
@@ -66,8 +66,8 @@ pub async fn run_transmitter(
             "Using audio format: {:?} at {} Hz with {} channels",
             sample_format, config.sample_rate.0, config.channels
         );
-        println!("Buffer size: {} bytes", buffer_size);
-        println!("Max reconnection attempts: {}", reconnect_attempts);
+        println!("Buffer size: {buffer_size} bytes");
+        println!("Max reconnection attempts: {reconnect_attempts}");
     }
 
     let tcp_stream = TcpStream::connect(&server_addr).await?;
@@ -78,7 +78,7 @@ pub async fn run_transmitter(
     let verbose_err = verbose;
     let err_fn = move |err| {
         if verbose_err {
-            eprintln!("Audio stream error: {}", err);
+            eprintln!("Audio stream error: {err}");
         }
     };
 
@@ -107,7 +107,7 @@ pub async fn run_transmitter(
                 match data {
                     Some(audio_data) => {
                         if let Err(e) = tcp_stream.write_all(&audio_data).await {
-                            eprintln!("Failed to send audio data: {}", e);
+                            eprintln!("Failed to send audio data: {e}");
 
                             if reconnect_attempts_count < max_reconnect_attempts {
                                 println!("Attempting to reconnect... ({}/{})",
@@ -120,7 +120,7 @@ pub async fn run_transmitter(
                                         println!("Reconnected successfully");
                                     }
                                     Err(e) => {
-                                        eprintln!("Reconnection failed: {}", e);
+                                        eprintln!("Reconnection failed: {e}");
                                         reconnect_attempts_count += 1;
                                         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                                     }
@@ -177,7 +177,7 @@ where
         loop {
             std::thread::sleep(std::time::Duration::from_secs(5));
             let count = packet_count_clone.load(Ordering::Relaxed);
-            println!("Audio packets captured: {} (in last 5 seconds)", count);
+            println!("Audio packets captured: {count} (in last 5 seconds)");
             packet_count_clone.store(0, Ordering::Relaxed);
         }
     });
@@ -191,7 +191,7 @@ where
             packet_count.fetch_add(1, Ordering::Relaxed);
 
             if let Err(e) = tx.send(converted_data) {
-                eprintln!("Failed to send audio data to channel: {}", e);
+                eprintln!("Failed to send audio data to channel: {e}");
             }
         },
         err_fn,

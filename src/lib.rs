@@ -201,15 +201,15 @@ pub fn setup_virtual_microphone_with_config(source_name: &str, fifo_path: &str) 
     
     let mkfifo_status = Command::new("mkfifo").arg(fifo_path).status()?;
     if !mkfifo_status.success() {
-        return Err(anyhow::anyhow!("Failed to create FIFO pipe at {}", fifo_path));
+        return Err(anyhow::anyhow!("Failed to create FIFO pipe at {fifo_path}"));
     }
 
     let output = Command::new("pactl")
         .args([
             "load-module",
             "module-pipe-source",
-            &format!("source_name={}", source_name),
-            &format!("file={}", fifo_path),
+            &format!("source_name={source_name}"),
+            &format!("file={fifo_path}"),
             "format=s16le",
             "rate=44100",
             "channels=2",
@@ -218,14 +218,12 @@ pub fn setup_virtual_microphone_with_config(source_name: &str, fifo_path: &str) 
         .output()?;
 
     if output.status.success() {
-        println!("Virtual microphone '{}' created successfully", source_name);
-        println!("FIFO pipe: {}", fifo_path);
+        println!("Virtual microphone '{source_name}' created successfully");
+        println!("FIFO pipe: {fifo_path}");
         Ok(VirtualMicResult::Success)
     } else {
-        eprintln!(
-            "Failed to create virtual microphone: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eprintln!("Failed to create virtual microphone: {stderr}");
         Ok(VirtualMicResult::Failed)
     }
 }
@@ -318,17 +316,11 @@ pub fn cleanup_virtual_microphone() -> Result<bool> {
             .output()?;
 
         if output.status.success() {
-            println!(
-                "Virtual microphone module {} unloaded successfully",
-                module_id
-            );
+            println!("Virtual microphone module {module_id} unloaded successfully");
             Ok(true)
         } else {
-            eprintln!(
-                "Failed to unload module {}: {}",
-                module_id,
-                String::from_utf8_lossy(&output.stderr)
-            );
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            eprintln!("Failed to unload module {module_id}: {stderr}");
             Ok(false)
         }
     } else {
@@ -372,7 +364,7 @@ pub fn parse_server_address(addr: Option<String>) -> String {
             if addr.contains(':') {
                 addr
             } else {
-                format!("{}:8080", addr)
+                format!("{addr}:8080")
             }
         }
         _ => "127.0.0.1:8080".to_string(),
@@ -421,7 +413,7 @@ pub fn parse_server_address(addr: Option<String>) -> String {
 pub fn validate_buffer_size(size: usize) -> Result<usize> {
     match size {
         0 => Err(anyhow::anyhow!("Buffer size cannot be zero")),
-        s if s > 65536 => Err(anyhow::anyhow!("Buffer size too large: {}", s)),
+        s if s > 65536 => Err(anyhow::anyhow!("Buffer size too large: {s}")),
         s => Ok(s),
     }
 }
@@ -482,9 +474,26 @@ mod tests {
     fn test_setup_virtual_microphone_integration() {
         // This test verifies the function compiles and can be called
         let result = setup_virtual_microphone();
+        // Function should return either Success, Failed, or an error
         match result {
-            Ok(_) => {}  // Success or failure both fine in test environment
-            Err(_) => {} // Error is acceptable in test environment
+            Ok(VirtualMicResult::Success) | Ok(VirtualMicResult::Failed) => {
+                // Both success and failure are acceptable in test environment
+            }
+            Err(_) => {
+                // Error is also acceptable (e.g., pactl not available)
+            }
+        }
+    }
+
+    #[test]
+    fn test_setup_virtual_microphone_with_custom_config() {
+        let result = setup_virtual_microphone_with_config(
+            "test_virtual_mic",
+            "/tmp/test_fifo_pipe"
+        );
+        // Function should return a result, any outcome is acceptable in test environment
+        match result {
+            Ok(_) | Err(_) => {} // Both success and error are acceptable
         }
     }
 
@@ -508,12 +517,63 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_buffer_size_typical_values() {
+        // Test common buffer sizes
+        assert_eq!(validate_buffer_size(1024).unwrap(), 1024);
+        assert_eq!(validate_buffer_size(2048).unwrap(), 2048);
+        assert_eq!(validate_buffer_size(4096).unwrap(), 4096);
+        assert_eq!(validate_buffer_size(8192).unwrap(), 8192);
+        assert_eq!(validate_buffer_size(16384).unwrap(), 16384);
+    }
+
+    #[test]
+    fn test_parse_server_address_edge_cases() {
+        // Test IPv6 addresses (should pass through unchanged if they have port)
+        assert_eq!(
+            parse_server_address(Some("[::1]:8080".to_string())),
+            "[::1]:8080"
+        );
+        
+        // Test hostname with port
+        assert_eq!(
+            parse_server_address(Some("example.com:9090".to_string())),
+            "example.com:9090"
+        );
+        
+        // Test just hostname
+        assert_eq!(
+            parse_server_address(Some("example.com".to_string())),
+            "example.com:8080"
+        );
+    }
+
+    #[test]
     fn test_audio_format_debug() {
         let format = AudioFormat::S16LE;
-        assert_eq!(format!("{:?}", format), "S16LE");
+        assert_eq!(format!("{format:?}"), "S16LE");
 
         let format = AudioFormat::F32LE;
-        assert_eq!(format!("{:?}", format), "F32LE");
+        assert_eq!(format!("{format:?}"), "F32LE");
+    }
+
+    #[test]
+    fn test_audio_config_clone() {
+        let config = AudioConfig::default();
+        let cloned = config.clone();
+        assert_eq!(config.sample_rate, cloned.sample_rate);
+        assert_eq!(config.channels, cloned.channels);
+    }
+
+    #[test]
+    fn test_audio_config_custom() {
+        let config = AudioConfig {
+            sample_rate: 48000,
+            channels: 1,
+            format: AudioFormat::F32LE,
+        };
+        assert_eq!(config.sample_rate, 48000);
+        assert_eq!(config.channels, 1);
+        matches!(config.format, AudioFormat::F32LE);
     }
 
     #[test]
@@ -527,9 +587,16 @@ mod tests {
         // This test verifies the function compiles and handles no module case
         let result = get_virtual_microphone_module_id();
         match result {
-            Ok(None) => {}    // Expected when no module is loaded
-            Ok(Some(_)) => {} // Also fine if module exists
-            Err(_) => {}      // Error is acceptable in test environment
+            Ok(None) => {
+                // Expected when no virtual microphone module is loaded
+            }
+            Ok(Some(module_id)) => {
+                // Verify module_id is a valid string (non-empty)
+                assert!(!module_id.is_empty());
+            }
+            Err(_) => {
+                // Error is acceptable in test environment (e.g., pactl not available)
+            }
         }
     }
 
@@ -538,8 +605,15 @@ mod tests {
         // This test verifies the function compiles and handles cleanup
         let result = cleanup_virtual_microphone();
         match result {
-            Ok(_) => {}  // Success or no-op both fine
-            Err(_) => {} // Error is acceptable in test environment
+            Ok(true) => {
+                // Successfully found and unloaded a module
+            }
+            Ok(false) => {
+                // No module found to cleanup (expected in most test environments)
+            }
+            Err(_) => {
+                // Error is acceptable in test environment (e.g., pactl not available)
+            }
         }
     }
 }

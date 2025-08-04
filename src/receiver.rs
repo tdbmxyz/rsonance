@@ -55,11 +55,11 @@ pub fn run_receiver(
 
     if verbose {
         println!("Configuration:");
-        println!("  Host: {}", host);
-        println!("  Port: {}", port);
-        println!("  Buffer size: {} bytes", buffer_size);
-        println!("  Microphone name: {}", microphone_name);
-        println!("  FIFO path: {}", fifo_path);
+        println!("  Host: {host}");
+        println!("  Port: {port}");
+        println!("  Buffer size: {buffer_size} bytes");
+        println!("  Microphone name: {microphone_name}");
+        println!("  FIFO path: {fifo_path}");
     }
 
     println!("Setting up virtual microphone...");
@@ -81,11 +81,11 @@ pub fn run_receiver(
     let mut signals = Signals::new([SIGINT])?;
     thread::spawn(move || {
         if let Some(sig) = signals.forever().next() {
-            println!("\nReceived signal {:?}, cleaning up...", sig);
+            println!("\nReceived signal {sig:?}, cleaning up...");
 
             // Cleanup virtual microphone
             if let Err(e) = cleanup_virtual_microphone() {
-                eprintln!("Error cleaning up virtual microphone: {}", e);
+                eprintln!("Error cleaning up virtual microphone: {e}");
             } else {
                 println!("Virtual microphone cleaned up successfully");
             }
@@ -93,7 +93,7 @@ pub fn run_receiver(
             // Clean up FIFO
             if Path::new(&fifo_path_cleanup).exists() {
                 if let Err(e) = std::fs::remove_file(&fifo_path_cleanup) {
-                    eprintln!("Error removing audio pipe: {}", e);
+                    eprintln!("Error removing audio pipe: {e}");
                 }
             }
 
@@ -102,10 +102,10 @@ pub fn run_receiver(
         }
     });
 
-    let bind_addr = format!("{}:{}", host, port);
+    let bind_addr = format!("{host}:{port}");
     let listener = TcpListener::bind(&bind_addr)?;
-    println!("Server listening on {}...", bind_addr);
-    println!("Virtual microphone '{}' created", microphone_name);
+    println!("Server listening on {bind_addr}...");
+    println!("Virtual microphone '{microphone_name}' created");
     println!("Remote desktop software can now use this as a microphone input");
     println!("Press Ctrl+C to stop and cleanup");
 
@@ -119,7 +119,7 @@ pub fn run_receiver(
 
         thread::spawn(move || {
             if let Err(e) = handle_audio_stream(stream, fifo_path, buffer_size, verbose) {
-                eprintln!("Error handling audio stream: {}", e);
+                eprintln!("Error handling audio stream: {e}");
             }
         });
     }
@@ -150,13 +150,13 @@ fn handle_audio_stream(
 ) -> anyhow::Result<()> {
     if verbose {
         println!("Starting audio stream handler");
-        println!("FIFO path: {}", fifo_path);
-        println!("Using buffer size: {} bytes", buffer_size);
+        println!("FIFO path: {fifo_path}");
+        println!("Using buffer size: {buffer_size} bytes");
     }
 
     // The FIFO should already exist, created by the virtual microphone setup
     if !Path::new(&fifo_path).exists() {
-        return Err(anyhow::anyhow!("FIFO pipe does not exist at {}", fifo_path));
+        return Err(anyhow::anyhow!("FIFO pipe does not exist at {fifo_path}"));
     }
 
     let mut buffer = vec![0u8; buffer_size];
@@ -174,15 +174,15 @@ fn handle_audio_stream(
                 }
                 Ok(n) => {
                     if verbose {
-                        println!("Received {} bytes of audio data, writing to FIFO", n);
+                        println!("Received {n} bytes of audio data, writing to FIFO");
                     }
                     if let Err(e) = fifo.write_all(&buffer[..n]) {
-                        eprintln!("Failed to write to audio pipe: {}", e);
+                        eprintln!("Failed to write to audio pipe: {e}");
                         break;
                     }
                 }
                 Err(e) => {
-                    eprintln!("TCP read error: {}", e);
+                    eprintln!("TCP read error: {e}");
                     break;
                 }
             }
