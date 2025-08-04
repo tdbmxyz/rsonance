@@ -1,6 +1,7 @@
 //! Audio receiver module that creates a virtual microphone and receives audio streams
 
 use crate::{VirtualMicResult, cleanup_virtual_microphone, setup_virtual_microphone_with_config, validate_buffer_size};
+use log::{info, warn, error, debug};
 use signal_hook::{consts::SIGINT, iterator::Signals};
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
@@ -31,7 +32,7 @@ use std::thread;
 /// # Example
 /// 
 /// ```no_run
-/// mike::receiver::run_receiver(
+/// rsonance::receiver::run_receiver(
 ///     "0.0.0.0".to_string(),
 ///     8080,
 ///     4096,
@@ -51,25 +52,25 @@ pub fn run_receiver(
     // Validate buffer size
     validate_buffer_size(buffer_size)?;
 
-    println!("Virtual microphone server starting...");
+    info!("Virtual microphone server starting...");
 
     if verbose {
-        println!("Configuration:");
-        println!("  Host: {host}");
-        println!("  Port: {port}");
-        println!("  Buffer size: {buffer_size} bytes");
-        println!("  Microphone name: {microphone_name}");
-        println!("  FIFO path: {fifo_path}");
+        info!("Configuration:");
+        info!("  Host: {host}");
+        info!("  Port: {port}");
+        info!("  Buffer size: {buffer_size} bytes");
+        info!("  Microphone name: {microphone_name}");
+        info!("  FIFO path: {fifo_path}");
     }
 
-    println!("Setting up virtual microphone...");
+    info!("Setting up virtual microphone...");
     let result = setup_virtual_microphone_with_config(&microphone_name, &fifo_path)?;
     match result {
         VirtualMicResult::Success => {
-            println!("Virtual microphone created successfully");
+            info!("Virtual microphone created successfully");
         }
         VirtualMicResult::Failed => {
-            eprintln!("Warning: Failed to create virtual microphone");
+            warn!("Failed to create virtual microphone");
         }
     }
 
@@ -81,19 +82,19 @@ pub fn run_receiver(
     let mut signals = Signals::new([SIGINT])?;
     thread::spawn(move || {
         if let Some(sig) = signals.forever().next() {
-            println!("\nReceived signal {sig:?}, cleaning up...");
+            info!("\nReceived signal {sig:?}, cleaning up...");
 
             // Cleanup virtual microphone
             if let Err(e) = cleanup_virtual_microphone() {
-                eprintln!("Error cleaning up virtual microphone: {e}");
+                error!("Error cleaning up virtual microphone: {e}");
             } else {
-                println!("Virtual microphone cleaned up successfully");
+                info!("Virtual microphone cleaned up successfully");
             }
 
             // Clean up FIFO
             if Path::new(&fifo_path_cleanup).exists() {
                 if let Err(e) = std::fs::remove_file(&fifo_path_cleanup) {
-                    eprintln!("Error removing audio pipe: {e}");
+                    error!("Error removing audio pipe: {e}");
                 }
             }
 
@@ -104,10 +105,10 @@ pub fn run_receiver(
 
     let bind_addr = format!("{host}:{port}");
     let listener = TcpListener::bind(&bind_addr)?;
-    println!("Server listening on {bind_addr}...");
-    println!("Virtual microphone '{microphone_name}' created");
-    println!("Remote desktop software can now use this as a microphone input");
-    println!("Press Ctrl+C to stop and cleanup");
+    info!("Server listening on {bind_addr}...");
+    info!("Virtual microphone '{microphone_name}' created");
+    info!("Remote desktop software can now use this as a microphone input");
+    info!("Press Ctrl+C to stop and cleanup");
 
     for stream in listener.incoming() {
         if !running.load(Ordering::SeqCst) {
@@ -119,7 +120,7 @@ pub fn run_receiver(
 
         thread::spawn(move || {
             if let Err(e) = handle_audio_stream(stream, fifo_path, buffer_size, verbose) {
-                eprintln!("Error handling audio stream: {e}");
+                error!("Error handling audio stream: {e}");
             }
         });
     }
@@ -149,9 +150,9 @@ fn handle_audio_stream(
     verbose: bool,
 ) -> anyhow::Result<()> {
     if verbose {
-        println!("Starting audio stream handler");
-        println!("FIFO path: {fifo_path}");
-        println!("Using buffer size: {buffer_size} bytes");
+        debug!("Starting audio stream handler");
+        debug!("FIFO path: {fifo_path}");
+        debug!("Using buffer size: {buffer_size} bytes");
     }
 
     // The FIFO should already exist, created by the virtual microphone setup
@@ -168,21 +169,21 @@ fn handle_audio_stream(
             match tcp_stream.read(&mut buffer) {
                 Ok(0) => {
                     if verbose {
-                        println!("Client disconnected");
+                        info!("Client disconnected");
                     }
                     break;
                 }
                 Ok(n) => {
                     if verbose {
-                        println!("Received {n} bytes of audio data, writing to FIFO");
+                        debug!("Received {n} bytes of audio data, writing to FIFO");
                     }
                     if let Err(e) = fifo.write_all(&buffer[..n]) {
-                        eprintln!("Failed to write to audio pipe: {e}");
+                        error!("Failed to write to audio pipe: {e}");
                         break;
                     }
                 }
                 Err(e) => {
-                    eprintln!("TCP read error: {e}");
+                    error!("TCP read error: {e}");
                     break;
                 }
             }

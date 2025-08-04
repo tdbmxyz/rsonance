@@ -1,4 +1,4 @@
-//! # Mike - Audio Transmission Tool
+//! # Rsonance - Audio Transmission Tool
 //!
 //! A Rust tool that captures microphone audio and transmits it to another device for playback
 //! through a virtual audio input device. This enables remote desktop software to capture audio
@@ -13,13 +13,17 @@
 //! ## Example Usage
 //!
 //! ```no_run
-//! use mike::{setup_virtual_microphone, cleanup_virtual_microphone, VirtualMicResult};
+//! use rsonance::{setup_virtual_microphone, cleanup_virtual_microphone, VirtualMicResult};
+//! use log::info;
+//!
+//! // Initialize logger
+//! env_logger::init();
 //!
 //! // Set up virtual microphone
 //! match setup_virtual_microphone() {
-//!     Ok(VirtualMicResult::Success) => println!("Virtual microphone created"),
-//!     Ok(VirtualMicResult::Failed) => eprintln!("Failed to create virtual microphone"),
-//!     Err(e) => eprintln!("Error: {}", e),
+//!     Ok(VirtualMicResult::Success) => info!("Virtual microphone created"),
+//!     Ok(VirtualMicResult::Failed) => log::warn!("Failed to create virtual microphone"),
+//!     Err(e) => log::error!("Error: {}", e),
 //! }
 //!
 //! // Later, clean up
@@ -30,6 +34,7 @@ pub mod receiver;
 pub mod transmitter;
 
 use anyhow::Result;
+use log::{info, error, debug};
 use std::process::Command;
 
 /// Configuration for audio streaming
@@ -41,7 +46,7 @@ use std::process::Command;
 /// # Examples
 /// 
 /// ```
-/// use mike::{AudioConfig, AudioFormat};
+/// use rsonance::{AudioConfig, AudioFormat};
 /// 
 /// let config = AudioConfig::default();
 /// assert_eq!(config.sample_rate, 44100);
@@ -98,12 +103,13 @@ impl Default for AudioConfig {
 /// # Examples
 /// 
 /// ```no_run
-/// use mike::{setup_virtual_microphone, VirtualMicResult};
+/// use rsonance::{setup_virtual_microphone, VirtualMicResult};
+/// use log::info;
 /// 
 /// match setup_virtual_microphone() {
-///     Ok(VirtualMicResult::Success) => println!("Virtual microphone created!"),
-///     Ok(VirtualMicResult::Failed) => eprintln!("Failed to create virtual microphone"),
-///     Err(e) => eprintln!("Error: {}", e),
+///     Ok(VirtualMicResult::Success) => info!("Virtual microphone created!"),
+///     Ok(VirtualMicResult::Failed) => log::warn!("Failed to create virtual microphone"),
+///     Err(e) => log::error!("Error: {}", e),
 /// }
 /// ```
 #[derive(Debug, PartialEq)]
@@ -129,11 +135,11 @@ pub enum VirtualMicResult {
 /// # Examples
 /// 
 /// ```no_run
-/// use mike::{setup_virtual_microphone, VirtualMicResult};
+/// use rsonance::{setup_virtual_microphone, VirtualMicResult};
 /// 
 /// match setup_virtual_microphone()? {
-///     VirtualMicResult::Success => println!("Virtual microphone ready!"),
-///     VirtualMicResult::Failed => eprintln!("Setup failed"),
+///     VirtualMicResult::Success => log::info!("Virtual microphone ready!"),
+///     VirtualMicResult::Failed => log::warn!("Setup failed"),
 /// }
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
@@ -144,7 +150,7 @@ pub enum VirtualMicResult {
 /// - `pactl` command must be available in PATH
 /// - User must have permissions to create audio devices
 pub fn setup_virtual_microphone() -> Result<VirtualMicResult> {
-    setup_virtual_microphone_with_config("mike_virtual_microphone", "/tmp/mike_audio_pipe")
+    setup_virtual_microphone_with_config("rsonance_virtual_microphone", "/tmp/rsonance_audio_pipe")
 }
 
 /// Creates a virtual microphone with custom configuration
@@ -167,7 +173,7 @@ pub fn setup_virtual_microphone() -> Result<VirtualMicResult> {
 /// # Examples
 /// 
 /// ```no_run
-/// use mike::{setup_virtual_microphone_with_config, VirtualMicResult};
+/// use rsonance::{setup_virtual_microphone_with_config, VirtualMicResult};
 /// 
 /// let result = setup_virtual_microphone_with_config(
 ///     "my_custom_mic",
@@ -175,8 +181,8 @@ pub fn setup_virtual_microphone() -> Result<VirtualMicResult> {
 /// )?;
 /// 
 /// match result {
-///     VirtualMicResult::Success => println!("Custom virtual microphone created!"),
-///     VirtualMicResult::Failed => eprintln!("PulseAudio operation failed"),
+///     VirtualMicResult::Success => log::info!("Custom virtual microphone created!"),
+///     VirtualMicResult::Failed => log::warn!("PulseAudio operation failed"),
 /// }
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
@@ -218,12 +224,12 @@ pub fn setup_virtual_microphone_with_config(source_name: &str, fifo_path: &str) 
         .output()?;
 
     if output.status.success() {
-        println!("Virtual microphone '{source_name}' created successfully");
-        println!("FIFO pipe: {fifo_path}");
+        info!("Virtual microphone '{source_name}' created successfully");
+        debug!("FIFO pipe: {fifo_path}");
         Ok(VirtualMicResult::Success)
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        eprintln!("Failed to create virtual microphone: {stderr}");
+        error!("Failed to create virtual microphone: {stderr}");
         Ok(VirtualMicResult::Failed)
     }
 }
@@ -242,11 +248,11 @@ pub fn setup_virtual_microphone_with_config(source_name: &str, fifo_path: &str) 
 /// # Examples
 /// 
 /// ```no_run
-/// use mike::get_virtual_microphone_module_id;
+/// use rsonance::get_virtual_microphone_module_id;
 /// 
 /// match get_virtual_microphone_module_id()? {
-///     Some(module_id) => println!("Virtual microphone module ID: {}", module_id),
-///     None => println!("No virtual microphone module found"),
+///     Some(module_id) => log::info!("Virtual microphone module ID: {module_id}"),
+///     None => log::debug!("No virtual microphone module found"),
 /// }
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
@@ -264,7 +270,7 @@ pub fn get_virtual_microphone_module_id() -> Result<Option<String>> {
 
     for line in output_str.lines() {
         if line.contains("module-pipe-source")
-            && line.contains("source_name=mike_virtual_microphone")
+            && line.contains("source_name=rsonance_virtual_microphone")
         {
             if let Some(module_id) = line.split_whitespace().next() {
                 return Ok(Some(module_id.to_string()));
@@ -289,11 +295,11 @@ pub fn get_virtual_microphone_module_id() -> Result<Option<String>> {
 /// # Examples
 /// 
 /// ```no_run
-/// use mike::cleanup_virtual_microphone;
+/// use rsonance::cleanup_virtual_microphone;
 /// 
 /// match cleanup_virtual_microphone()? {
-///     true => println!("Virtual microphone cleaned up successfully"),
-///     false => println!("No virtual microphone found or cleanup failed"),
+///     true => log::info!("Virtual microphone cleaned up successfully"),
+///     false => log::debug!("No virtual microphone found or cleanup failed"),
 /// }
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
@@ -306,7 +312,7 @@ pub fn get_virtual_microphone_module_id() -> Result<Option<String>> {
 /// 
 /// # Notes
 /// 
-/// This function specifically looks for the "mike_virtual_microphone" source.
+/// This function specifically looks for the "rsonance_virtual_microphone" source.
 /// If you used a different source name with `setup_virtual_microphone_with_config`,
 /// you may need to manually unload the module using `pactl unload-module <id>`.
 pub fn cleanup_virtual_microphone() -> Result<bool> {
@@ -316,15 +322,15 @@ pub fn cleanup_virtual_microphone() -> Result<bool> {
             .output()?;
 
         if output.status.success() {
-            println!("Virtual microphone module {module_id} unloaded successfully");
+            info!("Virtual microphone module {module_id} unloaded successfully");
             Ok(true)
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            eprintln!("Failed to unload module {module_id}: {stderr}");
+            error!("Failed to unload module {module_id}: {stderr}");
             Ok(false)
         }
     } else {
-        println!("No virtual microphone module found to cleanup");
+        debug!("No virtual microphone module found to cleanup");
         Ok(false)
     }
 }
@@ -346,7 +352,7 @@ pub fn cleanup_virtual_microphone() -> Result<bool> {
 /// # Examples
 /// 
 /// ```
-/// use mike::parse_server_address;
+/// use rsonance::parse_server_address;
 /// 
 /// assert_eq!(parse_server_address(Some("192.168.1.100".to_string())), "192.168.1.100:8080");
 /// assert_eq!(parse_server_address(Some("example.com:9090".to_string())), "example.com:9090");
@@ -395,7 +401,7 @@ pub fn parse_server_address(addr: Option<String>) -> String {
 /// # Examples
 /// 
 /// ```
-/// use mike::validate_buffer_size;
+/// use rsonance::validate_buffer_size;
 /// 
 /// assert_eq!(validate_buffer_size(4096).unwrap(), 4096);
 /// assert_eq!(validate_buffer_size(1024).unwrap(), 1024);

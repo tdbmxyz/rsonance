@@ -1,4 +1,4 @@
-# Audio Transmission Tool
+# Rsonance - Audio Transmission Tool
 
 ## Project Overview
 A Rust tool that captures microphone audio and transmits it to another device for playback through a virtual audio input device. This enables remote desktop software to capture audio from a remote microphone.
@@ -62,15 +62,16 @@ cargo run -- transmitter --reconnect-attempts 10
 ```
 
 ### 3. Configure Remote Desktop Software
-In your remote desktop application, select "Mike_Virtual_Microphone" as the microphone input device.
+In your remote desktop application, select "Rsonance_Virtual_Microphone" as the microphone input device.
 
 ## Features
 - **Virtual Audio Input**: Creates a virtual microphone that appears as a real input device
-- **Low Latency**: Optimized for real-time audio transmission
+- **Low Latency**: Optimized for real-time audio transmission with structured logging
 - **Auto-Reconnection**: Transmitter automatically reconnects if connection drops
 - **Multiple Formats**: Supports F32, I16, and U16 audio sample formats
 - **PulseAudio Compatible**: Works with PulseAudio and PipeWire (via PA compatibility)
 - **Auto-Cleanup**: Automatically removes virtual device on exit (Ctrl+C)
+- **Structured Logging**: Uses industry-standard `log` crate with configurable levels
 
 ## Commands
 - Build: `cargo build --release`
@@ -94,8 +95,8 @@ Use `cargo run -- --help` to see all available commands and options.
 - `--host/-H <HOST>`: Host address to bind to (default: 0.0.0.0)
 - `--port/-p <PORT>`: Port to listen on (default: 8080)
 - `--buffer-size/-b <SIZE>`: Audio buffer size in bytes (default: 4096)
-- `--microphone-name/-m <NAME>`: Virtual microphone name (default: mike_virtual_microphone)
-- `--fifo-path/-f <PATH>`: FIFO pipe path (default: /tmp/mike_audio_pipe)
+- `--microphone-name/-m <NAME>`: Virtual microphone name (default: rsonance_virtual_microphone)
+- `--fifo-path/-f <PATH>`: FIFO pipe path (default: /tmp/rsonance_audio_pipe)
 - `--verbose/-v`: Enable verbose output
 
 ### Transmitter Options
@@ -125,7 +126,28 @@ Use `cargo run -- --help` to see all available commands and options.
 ## Troubleshooting
 - Check if PulseAudio/PipeWire is running: `pactl info`
 - List audio sources: `pactl list sources short`
-- Verify virtual microphone: Look for "mike_virtual_microphone" in sources
+- Verify virtual microphone: Look for "rsonance_virtual_microphone" in sources
 - Ensure firewall allows TCP connections on port 8080
 - Manual cleanup if needed: `pactl unload-module <module_id>` (find ID with `pactl list modules short | grep pipe-source`)
+
+## Logging
+
+Rsonance uses structured logging with the `log` crate. Set the `RUST_LOG` environment variable to control log levels:
+
+```bash
+# Show all logs
+RUST_LOG=debug cargo run -- receiver --verbose
+
+# Show only errors and warnings
+RUST_LOG=warn cargo run -- transmitter
+
+# Show info level and above (default)
+RUST_LOG=info cargo run -- receiver
+```
+
+Log levels used:
+- **ERROR**: Critical failures (connection errors, audio pipe failures)
+- **WARN**: Recoverable issues (reconnection attempts, setup warnings)  
+- **INFO**: Important status messages (server start, connections, cleanup)
+- **DEBUG**: Detailed information (buffer sizes, audio packet counts, configuration details)
 - On Hyprland/Wayland: Ensure audio session is properly configured

@@ -1,12 +1,12 @@
 use clap::{Parser, Subcommand};
 
-/// Mike - Audio Transmission Tool
+/// Rsonance - Audio Transmission Tool
 /// 
 /// A Rust tool that captures microphone audio and transmits it to another device for playback
 /// through a virtual audio input device. This enables remote desktop software to capture audio
 /// from a remote microphone.
 #[derive(Parser)]
-#[command(name = "mike")]
+#[command(name = "rsonance")]
 #[command(about = "Audio transmission tool for remote microphone streaming")]
 #[command(version)]
 struct Cli {
@@ -31,11 +31,11 @@ enum Commands {
         buffer_size: usize,
 
         /// Virtual microphone name
-        #[arg(short, long, default_value = "mike_virtual_microphone")]
+        #[arg(short, long, default_value = "rsonance_virtual_microphone")]
         microphone_name: String,
 
         /// FIFO pipe path for audio data
-        #[arg(short, long, default_value = "/tmp/mike_audio_pipe")]
+        #[arg(short, long, default_value = "/tmp/rsonance_audio_pipe")]
         fifo_path: String,
 
         /// Enable verbose output
@@ -68,6 +68,9 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Initialize logger
+    env_logger::init();
+    
     let cli = Cli::parse();
 
     match cli.command {
@@ -79,7 +82,7 @@ async fn main() -> anyhow::Result<()> {
             fifo_path,
             verbose,
         } => {
-            mike::receiver::run_receiver(
+            rsonance::receiver::run_receiver(
                 host, port, buffer_size, microphone_name, fifo_path, verbose
             )
         }
@@ -90,7 +93,7 @@ async fn main() -> anyhow::Result<()> {
             reconnect_attempts,
             verbose,
         } => {
-            mike::transmitter::run_transmitter(
+            rsonance::transmitter::run_transmitter(
                 host, port, buffer_size, reconnect_attempts, verbose
             ).await
         }
