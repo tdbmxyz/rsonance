@@ -414,7 +414,7 @@ mod tests {
         let config = AudioConfig::default();
         assert_eq!(config.sample_rate, 44100);
         assert_eq!(config.channels, 2);
-        matches!(config.format, AudioFormat::S16LE);
+        assert!(matches!(config.format, AudioFormat::S16LE));
     }
 
     #[test]
@@ -509,7 +509,7 @@ mod tests {
         };
         assert_eq!(config.sample_rate, 48000);
         assert_eq!(config.channels, 1);
-        matches!(config.format, AudioFormat::F32LE);
+        assert!(matches!(config.format, AudioFormat::F32LE));
     }
 
     #[test]
