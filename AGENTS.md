@@ -59,6 +59,12 @@ cargo run -- --help                            # CLI help
 - **cargo test** must pass. Tests are inline `#[cfg(test)]` modules in each source file.
 - Add dependencies with `cargo add <crate>`, not by editing Cargo.toml directly.
 
+## Git Conventions
+
+- **Atomic commits** - each commit should contain one logical change. Separate formatting, bug fixes, refactors, docs, and features into distinct commits.
+- **Conventional commit messages** - use the `type(scope): description` format. Types: `feat`, `fix`, `chore`, `docs`, `style`, `refactor`, `test`.
+- **Push after committing** unless there's a reason to hold (e.g. waiting for review).
+
 ## Project Structure
 
 ```
