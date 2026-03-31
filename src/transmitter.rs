@@ -103,11 +103,8 @@ pub async fn run_transmitter(
 
     let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
 
-    let verbose_err = verbose;
     let err_fn = move |err| {
-        if verbose_err {
-            error!("Audio stream error: {err}");
-        }
+        error!("Audio stream error: {err}");
     };
 
     let stream = match sample_format {

@@ -122,7 +122,7 @@ pub fn run_receiver(
         let fifo_path = fifo_path.clone();
 
         thread::spawn(move || {
-            if let Err(e) = handle_audio_stream(stream, fifo_path, buffer_size, verbose) {
+            if let Err(e) = handle_audio_stream(stream, fifo_path, buffer_size) {
                 error!("Error handling audio stream: {e}");
             }
         });
@@ -141,22 +141,16 @@ pub fn run_receiver(
 /// * `tcp_stream` - The TCP connection from the transmitter
 /// * `fifo_path` - Path to the FIFO pipe for audio data
 /// * `buffer_size` - Size of the buffer for reading audio data
-/// * `verbose` - Enable verbose logging
-///
-/// # Returns
 ///
 /// Returns `Ok(())` on successful completion, or an error if the stream fails
 fn handle_audio_stream(
     mut tcp_stream: TcpStream,
     fifo_path: String,
     buffer_size: usize,
-    verbose: bool,
 ) -> anyhow::Result<()> {
-    if verbose {
-        debug!("Starting audio stream handler");
-        debug!("FIFO path: {fifo_path}");
-        debug!("Using buffer size: {buffer_size} bytes");
-    }
+    debug!("Starting audio stream handler");
+    debug!("FIFO path: {fifo_path}");
+    debug!("Using buffer size: {buffer_size} bytes");
 
     // The FIFO should already exist, created by the virtual microphone setup
     if !Path::new(&fifo_path).exists() {
@@ -171,15 +165,11 @@ fn handle_audio_stream(
         loop {
             match tcp_stream.read(&mut buffer) {
                 Ok(0) => {
-                    if verbose {
-                        info!("Client disconnected");
-                    }
+                    info!("Client disconnected");
                     break;
                 }
                 Ok(n) => {
-                    if verbose {
-                        debug!("Received {n} bytes of audio data, writing to FIFO");
-                    }
+                    debug!("Received {n} bytes of audio data, writing to FIFO");
                     if let Err(e) = fifo.write_all(&buffer[..n]) {
                         error!("Failed to write to audio pipe: {e}");
                         break;
@@ -228,7 +218,6 @@ mod tests {
             server_stream,
             "/tmp/non_existent_fifo".to_string(),
             4096,
-            false,
         );
 
         assert!(result.is_err());
