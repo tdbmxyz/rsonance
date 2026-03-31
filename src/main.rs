@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 
 /// Rsonance - Audio Transmission Tool
-/// 
+///
 /// A Rust tool that captures microphone audio and transmits it to another device for playback
 /// through a virtual audio input device. This enables remote desktop software to capture audio
 /// from a remote microphone.
@@ -70,7 +70,7 @@ enum Commands {
 async fn main() -> anyhow::Result<()> {
     // Initialize logger
     env_logger::init();
-    
+
     let cli = Cli::parse();
 
     match cli.command {
@@ -81,11 +81,14 @@ async fn main() -> anyhow::Result<()> {
             microphone_name,
             fifo_path,
             verbose,
-        } => {
-            rsonance::receiver::run_receiver(
-                host, port, buffer_size, microphone_name, fifo_path, verbose
-            )
-        }
+        } => rsonance::receiver::run_receiver(
+            host,
+            port,
+            buffer_size,
+            microphone_name,
+            fifo_path,
+            verbose,
+        ),
         Commands::Transmitter {
             host,
             port,
@@ -94,8 +97,13 @@ async fn main() -> anyhow::Result<()> {
             verbose,
         } => {
             rsonance::transmitter::run_transmitter(
-                host, port, buffer_size, reconnect_attempts, verbose
-            ).await
+                host,
+                port,
+                buffer_size,
+                reconnect_attempts,
+                verbose,
+            )
+            .await
         }
     }
 }

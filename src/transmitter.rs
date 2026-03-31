@@ -1,32 +1,32 @@
 //! Audio transmitter module that captures microphone input and streams it to a remote receiver
 
 use crate::validate_buffer_size;
-use log::{info, warn, error, debug};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use log::{debug, error, info, warn};
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 
 /// Run the transmitter with the given configuration
-/// 
+///
 /// This function captures audio from the default microphone and streams it to
 /// a remote receiver over TCP. It supports automatic reconnection if the connection
 /// is lost.
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `host` - Server address to connect to (e.g., "127.0.0.1" or "192.168.1.100")
 /// * `port` - Server port to connect to
 /// * `buffer_size` - Audio buffer size in bytes (affects latency)
 /// * `reconnect_attempts` - Maximum number of reconnection attempts on failure
 /// * `verbose` - Enable verbose logging output
-/// 
+///
 /// # Returns
-/// 
+///
 /// Returns `Ok(())` on successful completion, or an error if audio capture or connection fails
-/// 
+///
 /// # Example
-/// 
+///
 /// ```no_run
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// rsonance::transmitter::run_transmitter(
@@ -143,20 +143,20 @@ pub async fn run_transmitter(
 }
 
 /// Build an input stream for the specified audio sample type
-/// 
+///
 /// This function creates a CPAL input stream that captures audio data and sends it
 /// through the provided channel. It handles different sample formats (F32, I16, U16)
 /// and converts them all to S16LE format for compatibility.
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `device` - The audio input device to capture from
 /// * `config` - Audio stream configuration (sample rate, channels, etc.)
 /// * `tx` - Channel sender for audio data
 /// * `err_fn` - Error callback function for stream errors
-/// 
+///
 /// # Returns
-/// 
+///
 /// Returns the created CPAL stream or an error if creation fails
 fn build_input_stream<T>(
     device: &cpal::Device,
@@ -167,12 +167,12 @@ fn build_input_stream<T>(
 where
     T: cpal::Sample + cpal::SizedSample + Send + 'static,
 {
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
-    
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     let packet_count = Arc::new(AtomicUsize::new(0));
     let packet_count_clone = packet_count.clone();
-    
+
     // Print debug info every 5 seconds
     std::thread::spawn(move || {
         loop {
@@ -188,7 +188,7 @@ where
         move |data: &[T], _| {
             // Convert audio data to S16LE format for PulseAudio compatibility
             let converted_data = convert_to_s16le(data);
-            
+
             packet_count.fetch_add(1, Ordering::Relaxed);
 
             if let Err(e) = tx.send(converted_data) {
@@ -203,21 +203,21 @@ where
 }
 
 /// Convert audio samples to S16LE format for PulseAudio compatibility
-/// 
+///
 /// This function takes audio samples of any supported format (F32, I16, U16) and
 /// converts them to signed 16-bit little-endian format, which is compatible with
 /// PulseAudio and most audio systems.
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `data` - Slice of audio samples to convert
-/// 
+///
 /// # Returns
-/// 
+///
 /// Vector of bytes in S16LE format
-/// 
+///
 /// # Notes
-/// 
+///
 /// - F32 samples are clamped to [-1.0, 1.0] range before conversion
 /// - U16 samples are converted by subtracting 32768 to center around zero
 /// - I16 samples are passed through unchanged
@@ -226,7 +226,7 @@ where
     T: cpal::Sample + cpal::SizedSample + 'static,
 {
     let mut result = Vec::with_capacity(data.len() * 2); // S16 is 2 bytes per sample
-    
+
     for &sample in data {
         // Convert to i16 based on sample type
         let i16_sample = if std::any::TypeId::of::<T>() == std::any::TypeId::of::<f32>() {
@@ -243,11 +243,11 @@ where
         } else {
             0i16 // Fallback for unsupported types
         };
-        
+
         // Write as little-endian bytes
         result.extend_from_slice(&i16_sample.to_le_bytes());
     }
-    
+
     result
 }
 
@@ -259,36 +259,36 @@ mod tests {
     fn test_convert_f32_to_s16le() {
         let f32_data: &[f32] = &[0.0, 0.5, -0.5, 1.0, -1.0];
         let result = convert_to_s16le(f32_data);
-        
+
         // Each f32 sample becomes 2 bytes (i16)
         assert_eq!(result.len(), f32_data.len() * 2);
-        
+
         // Check specific conversions
         let samples: Vec<i16> = result
             .chunks_exact(2)
             .map(|chunk| i16::from_le_bytes([chunk[0], chunk[1]]))
             .collect();
-        
-        assert_eq!(samples[0], 0);              // 0.0 -> 0
-        assert_eq!(samples[1], 16383);          // 0.5 -> ~half of i16::MAX
-        assert_eq!(samples[2], -16383);         // -0.5 -> ~half of i16::MIN
-        assert_eq!(samples[3], 32767);          // 1.0 -> i16::MAX
-        assert_eq!(samples[4], -32767);         // -1.0 -> close to i16::MIN
+
+        assert_eq!(samples[0], 0); // 0.0 -> 0
+        assert_eq!(samples[1], 16383); // 0.5 -> ~half of i16::MAX
+        assert_eq!(samples[2], -16383); // -0.5 -> ~half of i16::MIN
+        assert_eq!(samples[3], 32767); // 1.0 -> i16::MAX
+        assert_eq!(samples[4], -32767); // -1.0 -> close to i16::MIN
     }
 
     #[test]
     fn test_convert_i16_to_s16le() {
         let i16_data: &[i16] = &[0, 1000, -1000, i16::MAX, i16::MIN];
         let result = convert_to_s16le(i16_data);
-        
+
         assert_eq!(result.len(), i16_data.len() * 2);
-        
+
         // Should be unchanged (i16 to i16)
         let samples: Vec<i16> = result
             .chunks_exact(2)
             .map(|chunk| i16::from_le_bytes([chunk[0], chunk[1]]))
             .collect();
-        
+
         assert_eq!(samples, i16_data);
     }
 
@@ -296,16 +296,16 @@ mod tests {
     fn test_convert_u16_to_s16le() {
         let u16_data: &[u16] = &[0, 32768, 65535];
         let result = convert_to_s16le(u16_data);
-        
+
         assert_eq!(result.len(), u16_data.len() * 2);
-        
+
         let samples: Vec<i16> = result
             .chunks_exact(2)
             .map(|chunk| i16::from_le_bytes([chunk[0], chunk[1]]))
             .collect();
-        
+
         // u16 0 -> i16 -32768 (0 - 32768)
-        // u16 32768 -> i16 0 (32768 - 32768)  
+        // u16 32768 -> i16 0 (32768 - 32768)
         // u16 65535 -> i16 32767 (65535 - 32768)
         assert_eq!(samples[0], -32768);
         assert_eq!(samples[1], 0);
@@ -324,16 +324,16 @@ mod tests {
         // Test values outside [-1.0, 1.0] range
         let f32_data: &[f32] = &[2.0, -2.0, f32::INFINITY, f32::NEG_INFINITY];
         let result = convert_to_s16le(f32_data);
-        
+
         let samples: Vec<i16> = result
             .chunks_exact(2)
             .map(|chunk| i16::from_le_bytes([chunk[0], chunk[1]]))
             .collect();
-        
+
         // All should be clamped to i16::MAX or close to i16::MIN
-        assert_eq!(samples[0], i16::MAX);   // 2.0 clamped to 1.0
-        assert_eq!(samples[1], -32767);    // -2.0 clamped to -1.0
-        assert_eq!(samples[2], i16::MAX);   // Infinity clamped to 1.0
-        assert_eq!(samples[3], -32767);    // -Infinity clamped to -1.0
+        assert_eq!(samples[0], i16::MAX); // 2.0 clamped to 1.0
+        assert_eq!(samples[1], -32767); // -2.0 clamped to -1.0
+        assert_eq!(samples[2], i16::MAX); // Infinity clamped to 1.0
+        assert_eq!(samples[3], -32767); // -Infinity clamped to -1.0
     }
 }

@@ -1,7 +1,10 @@
 //! Audio receiver module that creates a virtual microphone and receives audio streams
 
-use crate::{VirtualMicResult, cleanup_virtual_microphone, setup_virtual_microphone_with_config, validate_buffer_size};
-use log::{info, warn, error, debug};
+use crate::{
+    VirtualMicResult, cleanup_virtual_microphone, setup_virtual_microphone_with_config,
+    validate_buffer_size,
+};
+use log::{debug, error, info, warn};
 use signal_hook::{consts::SIGINT, iterator::Signals};
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
@@ -12,25 +15,25 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 
 /// Run the receiver with the given configuration
-/// 
+///
 /// This function sets up a virtual microphone, binds to the specified address/port,
 /// and handles incoming audio streams from transmitter clients.
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `host` - Host address to bind to (e.g., "0.0.0.0" or "127.0.0.1")
 /// * `port` - Port number to listen on
 /// * `buffer_size` - Audio buffer size in bytes (affects latency)
 /// * `microphone_name` - Name of the virtual microphone to create
 /// * `fifo_path` - Path where the FIFO pipe will be created
 /// * `verbose` - Enable verbose logging output
-/// 
+///
 /// # Returns
-/// 
+///
 /// Returns `Ok(())` on successful completion, or an error if setup fails
-/// 
+///
 /// # Example
-/// 
+///
 /// ```no_run
 /// rsonance::receiver::run_receiver(
 ///     "0.0.0.0".to_string(),
@@ -129,19 +132,19 @@ pub fn run_receiver(
 }
 
 /// Handle an individual audio stream from a transmitter client
-/// 
+///
 /// This function reads audio data from a TCP stream and writes it to the FIFO pipe
 /// that feeds the virtual microphone.
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `tcp_stream` - The TCP connection from the transmitter
 /// * `fifo_path` - Path to the FIFO pipe for audio data
 /// * `buffer_size` - Size of the buffer for reading audio data
 /// * `verbose` - Enable verbose logging
-/// 
+///
 /// # Returns
-/// 
+///
 /// Returns `Ok(())` on successful completion, or an error if the stream fails
 fn handle_audio_stream(
     mut tcp_stream: TcpStream,
@@ -207,29 +210,34 @@ mod tests {
     fn test_handle_audio_stream_missing_fifo() {
         use std::net::{TcpListener, TcpStream};
         use std::thread;
-        
+
         // Create a test TCP connection
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
-        
+
         let handle = thread::spawn(move || {
             let (stream, _) = listener.accept().unwrap();
             stream
         });
-        
+
         let _client_stream = TcpStream::connect(addr).unwrap();
         let server_stream = handle.join().unwrap();
-        
+
         // Test with non-existent FIFO
         let result = handle_audio_stream(
             server_stream,
             "/tmp/non_existent_fifo".to_string(),
             4096,
-            false
+            false,
         );
-        
+
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("FIFO pipe does not exist"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("FIFO pipe does not exist")
+        );
     }
 
     #[test]
@@ -237,45 +245,43 @@ mod tests {
         use std::net::{TcpListener, TcpStream};
         use std::thread;
         use std::time::Duration;
-        
+
         // Create test FIFO
         let test_fifo = "/tmp/test_audio_pipe_for_test";
         let _ = fs::remove_file(test_fifo); // Clean up if exists
-        
+
         // Create FIFO
-        let status = std::process::Command::new("mkfifo")
-            .arg(test_fifo)
-            .status();
-        
+        let status = std::process::Command::new("mkfifo").arg(test_fifo).status();
+
         if status.is_err() || !status.unwrap().success() {
             // Skip test if mkfifo fails (not available)
             return;
         }
-        
+
         // Create a test TCP connection
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
-        
+
         let test_fifo_clone = test_fifo.to_string();
         let handle = thread::spawn(move || {
             let (stream, _) = listener.accept().unwrap();
-            
+
             // Give some time for the handler to start
             thread::sleep(Duration::from_millis(100));
-            
+
             // Don't run the full handler as it would block on FIFO reading
             // Just verify the FIFO exists check passes
             let _result = std::path::Path::new(&test_fifo_clone).exists();
-            
+
             stream
         });
-        
+
         let _client_stream = TcpStream::connect(addr).unwrap();
         let _server_stream = handle.join().unwrap();
-        
+
         // Verify FIFO exists
         assert!(std::path::Path::new(test_fifo).exists());
-        
+
         // Clean up
         let _ = fs::remove_file(test_fifo);
     }
