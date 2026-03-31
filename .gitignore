@@ -9,6 +9,9 @@ devenv.local.nix
 .pre-commit-config.yaml
 
 
+# Nix
+result
+
 # Added by cargo
 
 /target
