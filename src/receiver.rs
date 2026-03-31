@@ -32,6 +32,14 @@ use std::thread;
 ///
 /// Returns `Ok(())` on successful completion, or an error if setup fails
 ///
+/// # Limitations
+///
+/// Only one active transmitter connection is supported at a time. The receiver
+/// accepts multiple simultaneous TCP connections and spawns a thread per client,
+/// but all clients write to the same FIFO pipe. Concurrent connections will
+/// produce corrupted audio. A future version may enforce single-client access
+/// explicitly (e.g., reject or queue additional connections).
+///
 /// # Example
 ///
 /// ```no_run
