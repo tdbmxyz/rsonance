@@ -68,10 +68,20 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize logger
-    env_logger::init();
-
     let cli = Cli::parse();
+
+    // Extract verbose flag from whichever subcommand was used
+    let verbose = match &cli.command {
+        Commands::Receiver { verbose, .. } | Commands::Transmitter { verbose, .. } => *verbose,
+    };
+
+    // Initialize logger: -v sets default to info, RUST_LOG overrides
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(if verbose {
+        "info"
+    } else {
+        "warn"
+    }))
+    .init();
 
     match cli.command {
         Commands::Receiver {
