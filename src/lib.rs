@@ -75,6 +75,16 @@ pub enum AudioFormat {
     F32LE,
 }
 
+impl AudioFormat {
+    /// Returns the PulseAudio format string for use with `pactl`.
+    pub fn as_pa_format(&self) -> &str {
+        match self {
+            AudioFormat::S16LE => "s16le",
+            AudioFormat::F32LE => "f32le",
+        }
+    }
+}
+
 impl Default for AudioConfig {
     /// Returns the default audio configuration
     ///
@@ -150,19 +160,25 @@ pub enum VirtualMicResult {
 /// - `pactl` command must be available in PATH
 /// - User must have permissions to create audio devices
 pub fn setup_virtual_microphone() -> Result<VirtualMicResult> {
-    setup_virtual_microphone_with_config("rsonance_virtual_microphone", "/tmp/rsonance_audio_pipe")
+    setup_virtual_microphone_with_config(
+        "rsonance_virtual_microphone",
+        "/tmp/rsonance_audio_pipe",
+        &AudioConfig::default(),
+    )
 }
 
 /// Creates a virtual microphone with custom configuration
 ///
 /// This function creates a virtual microphone device using PulseAudio's
-/// `pactl` command with custom source name and FIFO path. It first creates
-/// the required FIFO pipe, then loads the PulseAudio pipe-source module.
+/// `pactl` command with custom source name, FIFO path, and audio configuration.
+/// It first creates the required FIFO pipe, then loads the PulseAudio
+/// pipe-source module with the specified audio parameters.
 ///
 /// # Arguments
 ///
 /// * `source_name` - Name for the virtual microphone source (e.g., "my_virtual_mic")
 /// * `fifo_path` - Path where the FIFO pipe will be created (e.g., "/tmp/my_audio_pipe")
+/// * `config` - Audio configuration specifying format, sample rate, and channel count
 ///
 /// # Returns
 ///
@@ -173,11 +189,12 @@ pub fn setup_virtual_microphone() -> Result<VirtualMicResult> {
 /// # Examples
 ///
 /// ```no_run
-/// use rsonance::{setup_virtual_microphone_with_config, VirtualMicResult};
+/// use rsonance::{AudioConfig, setup_virtual_microphone_with_config, VirtualMicResult};
 ///
 /// let result = setup_virtual_microphone_with_config(
 ///     "my_custom_mic",
-///     "/tmp/my_custom_pipe"
+///     "/tmp/my_custom_pipe",
+///     &AudioConfig::default(),
 /// )?;
 ///
 /// match result {
@@ -197,11 +214,12 @@ pub fn setup_virtual_microphone() -> Result<VirtualMicResult> {
 /// # Notes
 ///
 /// - If a FIFO already exists at `fifo_path`, it will be removed and recreated
-/// - The virtual microphone will use S16LE format at 44100Hz with 2 channels
+/// - The audio format, sample rate, and channels are determined by `config`
 /// - The source description will be the source name with underscores replaced by spaces
 pub fn setup_virtual_microphone_with_config(
     source_name: &str,
     fifo_path: &str,
+    config: &AudioConfig,
 ) -> Result<VirtualMicResult> {
     // First, ensure the FIFO exists
     if std::path::Path::new(fifo_path).exists() {
@@ -219,9 +237,9 @@ pub fn setup_virtual_microphone_with_config(
             "module-pipe-source",
             &format!("source_name={source_name}"),
             &format!("file={fifo_path}"),
-            "format=s16le",
-            "rate=44100",
-            "channels=2",
+            &format!("format={}", config.format.as_pa_format()),
+            &format!("rate={}", config.sample_rate),
+            &format!("channels={}", config.channels),
             &format!(
                 "source_properties=device.description={}",
                 source_name.replace('_', " ")
@@ -340,48 +358,6 @@ pub fn cleanup_virtual_microphone() -> Result<bool> {
     }
 }
 
-/// Parse and validate a server address string
-///
-/// This function takes an optional server address string and returns a properly
-/// formatted address with default values applied as needed. If no port is specified,
-/// it defaults to 8080. If the address is empty or None, it defaults to localhost.
-///
-/// # Arguments
-///
-/// * `addr` - Optional server address string (e.g., "192.168.1.100", "example.com:9090")
-///
-/// # Returns
-///
-/// Returns a formatted address string in the form "host:port"
-///
-/// # Examples
-///
-/// ```
-/// use rsonance::parse_server_address;
-///
-/// assert_eq!(parse_server_address(Some("192.168.1.100".to_string())), "192.168.1.100:8080");
-/// assert_eq!(parse_server_address(Some("example.com:9090".to_string())), "example.com:9090");
-/// assert_eq!(parse_server_address(None), "127.0.0.1:8080");
-/// assert_eq!(parse_server_address(Some("".to_string())), "127.0.0.1:8080");
-/// ```
-///
-/// # Default Values
-///
-/// - Default host: 127.0.0.1 (localhost)
-/// - Default port: 8080
-pub fn parse_server_address(addr: Option<String>) -> String {
-    match addr {
-        Some(addr) if !addr.trim().is_empty() => {
-            if addr.contains(':') {
-                addr
-            } else {
-                format!("{addr}:8080")
-            }
-        }
-        _ => "127.0.0.1:8080".to_string(),
-    }
-}
-
 /// Validate audio buffer size for streaming
 ///
 /// This function validates that the provided buffer size is within acceptable
@@ -442,30 +418,6 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_server_address_with_port() {
-        let addr = parse_server_address(Some("192.168.1.100:9090".to_string()));
-        assert_eq!(addr, "192.168.1.100:9090");
-    }
-
-    #[test]
-    fn test_parse_server_address_without_port() {
-        let addr = parse_server_address(Some("192.168.1.100".to_string()));
-        assert_eq!(addr, "192.168.1.100:8080");
-    }
-
-    #[test]
-    fn test_parse_server_address_empty() {
-        let addr = parse_server_address(Some("".to_string()));
-        assert_eq!(addr, "127.0.0.1:8080");
-    }
-
-    #[test]
-    fn test_parse_server_address_none() {
-        let addr = parse_server_address(None);
-        assert_eq!(addr, "127.0.0.1:8080");
-    }
-
-    #[test]
     fn test_validate_buffer_size_valid() {
         assert_eq!(validate_buffer_size(4096).unwrap(), 4096);
         assert_eq!(validate_buffer_size(1024).unwrap(), 1024);
@@ -498,24 +450,14 @@ mod tests {
 
     #[test]
     fn test_setup_virtual_microphone_with_custom_config() {
-        let result =
-            setup_virtual_microphone_with_config("test_virtual_mic", "/tmp/test_fifo_pipe");
-        // Function should return a result, any outcome is acceptable in test environment
+        let result = setup_virtual_microphone_with_config(
+            "test_virtual_mic",
+            "/tmp/test_fifo_pipe",
+            &AudioConfig::default(),
+        );
         match result {
-            Ok(_) | Err(_) => {} // Both success and error are acceptable
+            Ok(_) | Err(_) => {}
         }
-    }
-
-    #[test]
-    fn test_parse_server_address_whitespace() {
-        let addr = parse_server_address(Some("  ".to_string()));
-        assert_eq!(addr, "127.0.0.1:8080");
-    }
-
-    #[test]
-    fn test_parse_server_address_with_protocol() {
-        let addr = parse_server_address(Some("192.168.1.100:9090".to_string()));
-        assert_eq!(addr, "192.168.1.100:9090");
     }
 
     #[test]
@@ -536,24 +478,9 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_server_address_edge_cases() {
-        // Test IPv6 addresses (should pass through unchanged if they have port)
-        assert_eq!(
-            parse_server_address(Some("[::1]:8080".to_string())),
-            "[::1]:8080"
-        );
-
-        // Test hostname with port
-        assert_eq!(
-            parse_server_address(Some("example.com:9090".to_string())),
-            "example.com:9090"
-        );
-
-        // Test just hostname
-        assert_eq!(
-            parse_server_address(Some("example.com".to_string())),
-            "example.com:8080"
-        );
+    fn test_audio_format_as_pa_format() {
+        assert_eq!(AudioFormat::S16LE.as_pa_format(), "s16le");
+        assert_eq!(AudioFormat::F32LE.as_pa_format(), "f32le");
     }
 
     #[test]

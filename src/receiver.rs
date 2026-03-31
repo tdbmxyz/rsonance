@@ -1,8 +1,8 @@
 //! Audio receiver module that creates a virtual microphone and receives audio streams
 
 use crate::{
-    VirtualMicResult, cleanup_virtual_microphone, setup_virtual_microphone_with_config,
-    validate_buffer_size,
+    AudioConfig, VirtualMicResult, cleanup_virtual_microphone,
+    setup_virtual_microphone_with_config, validate_buffer_size,
 };
 use log::{debug, error, info, warn};
 use signal_hook::{consts::SIGINT, iterator::Signals};
@@ -67,7 +67,11 @@ pub fn run_receiver(
     }
 
     info!("Setting up virtual microphone...");
-    let result = setup_virtual_microphone_with_config(&microphone_name, &fifo_path)?;
+    let result = setup_virtual_microphone_with_config(
+        &microphone_name,
+        &fifo_path,
+        &AudioConfig::default(),
+    )?;
     match result {
         VirtualMicResult::Success => {
             info!("Virtual microphone created successfully");
@@ -214,11 +218,7 @@ mod tests {
         let server_stream = handle.join().unwrap();
 
         // Test with non-existent FIFO
-        let result = handle_audio_stream(
-            server_stream,
-            "/tmp/non_existent_fifo".to_string(),
-            4096,
-        );
+        let result = handle_audio_stream(server_stream, "/tmp/non_existent_fifo".to_string(), 4096);
 
         assert!(result.is_err());
         assert!(
