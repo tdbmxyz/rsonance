@@ -4,6 +4,7 @@
     git
     alsa-lib
     pipewire
+    pulseaudio # provides pactl, required for virtual microphone management
   ];
 
   stdenv = pkgs.clang19Stdenv;
