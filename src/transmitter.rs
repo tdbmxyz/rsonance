@@ -7,6 +7,33 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 
+/// Sealed trait for converting audio samples to signed 16-bit little-endian.
+///
+/// Implemented for `f32`, `i16`, and `u16` — the three sample formats
+/// supported by cpal that this tool handles. This replaces the previous
+/// unsafe `TypeId`-based dispatch.
+trait ToS16: cpal::Sample + cpal::SizedSample + Send + 'static {
+    fn to_s16(self) -> i16;
+}
+
+impl ToS16 for f32 {
+    fn to_s16(self) -> i16 {
+        (self.clamp(-1.0, 1.0) * i16::MAX as f32) as i16
+    }
+}
+
+impl ToS16 for i16 {
+    fn to_s16(self) -> i16 {
+        self
+    }
+}
+
+impl ToS16 for u16 {
+    fn to_s16(self) -> i16 {
+        (self as i32 - 32768) as i16
+    }
+}
+
 /// Run the transmitter with the given configuration
 ///
 /// This function captures audio from the default microphone and streams it to
@@ -165,7 +192,7 @@ fn build_input_stream<T>(
     err_fn: impl Fn(cpal::StreamError) + Send + 'static,
 ) -> anyhow::Result<cpal::Stream>
 where
-    T: cpal::Sample + cpal::SizedSample + Send + 'static,
+    T: ToS16,
 {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -221,33 +248,11 @@ where
 /// - F32 samples are clamped to [-1.0, 1.0] range before conversion
 /// - U16 samples are converted by subtracting 32768 to center around zero
 /// - I16 samples are passed through unchanged
-fn convert_to_s16le<T>(data: &[T]) -> Vec<u8>
-where
-    T: cpal::Sample + cpal::SizedSample + 'static,
-{
-    let mut result = Vec::with_capacity(data.len() * 2); // S16 is 2 bytes per sample
-
-    for &sample in data {
-        // Convert to i16 based on sample type
-        let i16_sample = if std::any::TypeId::of::<T>() == std::any::TypeId::of::<f32>() {
-            // F32 to I16
-            let f32_val = unsafe { *(&sample as *const T as *const f32) };
-            (f32_val.clamp(-1.0, 1.0) * i16::MAX as f32) as i16
-        } else if std::any::TypeId::of::<T>() == std::any::TypeId::of::<i16>() {
-            // I16 to I16 (no conversion needed)
-            unsafe { *(&sample as *const T as *const i16) }
-        } else if std::any::TypeId::of::<T>() == std::any::TypeId::of::<u16>() {
-            // U16 to I16
-            let u16_val = unsafe { *(&sample as *const T as *const u16) };
-            (u16_val as i32 - 32768) as i16
-        } else {
-            0i16 // Fallback for unsupported types
-        };
-
-        // Write as little-endian bytes
-        result.extend_from_slice(&i16_sample.to_le_bytes());
+fn convert_to_s16le<T: ToS16>(data: &[T]) -> Vec<u8> {
+    let mut result = Vec::with_capacity(data.len() * 2);
+    for sample in data.iter().copied() {
+        result.extend_from_slice(&sample.to_s16().to_le_bytes());
     }
-
     result
 }
 
