@@ -194,30 +194,11 @@ fn build_input_stream<T>(
 where
     T: ToS16,
 {
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    let packet_count = Arc::new(AtomicUsize::new(0));
-    let packet_count_clone = packet_count.clone();
-
-    // Print debug info every 5 seconds
-    std::thread::spawn(move || {
-        loop {
-            std::thread::sleep(std::time::Duration::from_secs(5));
-            let count = packet_count_clone.load(Ordering::Relaxed);
-            debug!("Audio packets captured: {count} (in last 5 seconds)");
-            packet_count_clone.store(0, Ordering::Relaxed);
-        }
-    });
-
     let stream = device.build_input_stream(
         config,
         move |data: &[T], _| {
-            // Convert audio data to S16LE format for PulseAudio compatibility
             let converted_data = convert_to_s16le(data);
-
-            packet_count.fetch_add(1, Ordering::Relaxed);
-
+            debug!("Audio packet captured: {} bytes", converted_data.len());
             if let Err(e) = tx.send(converted_data) {
                 error!("Failed to send audio data to channel: {e}");
             }
