@@ -277,10 +277,9 @@ pub fn get_virtual_microphone_module_id() -> Result<Option<String>> {
     for line in output_str.lines() {
         if line.contains("module-pipe-source")
             && line.contains("source_name=rsonance_virtual_microphone")
+            && let Some(module_id) = line.split_whitespace().next()
         {
-            if let Some(module_id) = line.split_whitespace().next() {
-                return Ok(Some(module_id.to_string()));
-            }
+            return Ok(Some(module_id.to_string()));
         }
     }
 

@@ -95,10 +95,10 @@ pub fn run_receiver(
             }
 
             // Clean up FIFO
-            if Path::new(&fifo_path_cleanup).exists() {
-                if let Err(e) = std::fs::remove_file(&fifo_path_cleanup) {
-                    error!("Error removing audio pipe: {e}");
-                }
+            if Path::new(&fifo_path_cleanup).exists()
+                && let Err(e) = std::fs::remove_file(&fifo_path_cleanup)
+            {
+                error!("Error removing audio pipe: {e}");
             }
 
             r.store(false, Ordering::SeqCst);
